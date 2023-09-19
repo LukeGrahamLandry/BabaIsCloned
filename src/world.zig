@@ -1,13 +1,15 @@
 const std = @import("std");
-const Pos = @Vector(2, i32);
+pub const Pos = @Vector(2, i32);
 
 pub const Level = struct {
     entities: std.ArrayList(Entity),
     rules: Rules,
-    pub fn init(alloc: std.mem.Allocator) Level {
+    size: Pos,
+    pub fn init(alloc: std.mem.Allocator, size: Pos) Level {
         return .{
             .entities = std.ArrayList(Entity).init(alloc),
             .rules = Rules.init(),
+            .size = size,
         };
     }
 
@@ -70,7 +72,7 @@ pub const Level = struct {
 };
 
 pub const Rules = struct {
-    states: std.EnumMap(Noun, std.EnumSet(State)),  // TODO: what about NOUN is NOUN. but that's more of a map change
+    states: std.EnumMap(Noun, std.EnumSet(State)), 
 
     pub fn is(self: Rules, noun: Noun, state: State) bool {
         return self.states.get(noun).?.contains(state);
@@ -134,7 +136,7 @@ pub const Dir = struct {
 
 const expectEq = std.testing.expectEqual;
 test "world repr sanity" {
-    var w = Level.init(std.heap.c_allocator);
+    var w = Level.init(std.heap.c_allocator, .{ 20, 30 });
 
     try expectEq(w.rules.is(.Baba, .You), false);
     w.rules.set(.Baba, .You);
@@ -146,6 +148,7 @@ test "world repr sanity" {
     try w.entities.append(.{ .pos = .{ 1, 0 }, .block = .{ .Object = .Rock }});
     try w.entities.append(.{ .pos = .{ 0, 0 }, .block = .{ .Object = .Baba }});
     try w.entities.append(.{ .pos = .{ 1, 10 }, .block = .{ .Object = .Wall }});
+    try w.entities.append(.{ .pos = .{ 5, 0 }, .block = .{ .State = .You }});
     try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Baba });
 
     try w.entities.append(.{ .pos = .{ 1, 20 }, .block = .{ .Noun = .Baba }});
@@ -161,4 +164,10 @@ test "world repr sanity" {
     w.calculateRules();
     try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Wall });
     try expectEq(w.getEntity(.{ 1, 10 }).?.block, .{ .Object = .Wall });
+
+    // const save = @import("save.zig");
+    // const data = try save.saveLevel(w, std.heap.c_allocator);
+    // std.debug.print("{!s}", .{data});
+    // const w2 = try save.loadLevel(data, std.heap.c_allocator);
+    // std.debug.print("{!s}", .{ save.saveLevel(w2, std.heap.c_allocator) });
 }
