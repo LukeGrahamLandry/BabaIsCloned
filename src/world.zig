@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 pub const Pos = @Vector(2, i32);
 
 pub const Level = struct {
@@ -13,7 +14,47 @@ pub const Level = struct {
         };
     }
 
+    pub fn movePlayer(self: *Level, dir: Pos) void {
+        for (self.entities.items) |*e| {
+            switch (e.block) {
+                .Object => |noun| {
+                    if (self.rules.is(noun, .You)) {
+                        if (!self.resolveMove(e, dir)) {
+                            // Hit something, so can't go that way. 
+                        }
+                    }
+                },
+                else => {}
+            }
+            
+        }
+    }
+
+    pub fn resolveMove(self: *Level, e: *Entity, dir: Pos) bool {
+        if (self.offBoard(e.pos + dir)) {
+            return false;
+        }
+
+        if (self.getEntity(e.pos + dir)) |other| {
+            if (self.rules.isStop(other.*)) {
+                return false;
+            }
+            if (self.rules.playerCanPush(other.*)) {
+                if (!self.resolveMove(other, dir)) {
+                    return false;
+                }
+            } else {
+                // Not stop and not push, so just pass through. 
+            }
+            
+        }
+
+        e.pos += dir;
+        return true;
+    }
+
     pub fn calculateRules(self: *Level) void {
+        self.rules.clear();
         for (self.entities.items) |e| {
             switch (e.block) {
                 .Is => {
@@ -69,6 +110,21 @@ pub const Level = struct {
         }
         return null;
     }
+    
+    pub fn onEdge(self: Level, pos: Pos) bool {
+        return pos[0] == 0 or pos[1] == 0 or pos[0] == self.size[0]-1 or pos[1] == self.size[1]-1;
+    }
+
+    pub fn offBoard(self: Level, pos: Pos) bool {
+        return pos[0] < 0 or pos[1] < 0 or pos[0] >= self.size[0] or pos[1] >= self.size[1];   
+    }
+
+    pub fn debugPrint(self: Level) void {
+        var buf: [4096] u8 = undefined;
+        var temp = std.heap.FixedBufferAllocator.init(&buf);
+        const info = @import("save.zig").saveLevel(self, temp.allocator());
+        std.debug.print("{!s}\n", .{info});
+    }
 };
 
 pub const Rules = struct {
@@ -80,6 +136,27 @@ pub const Rules = struct {
 
     pub fn set(self: *Rules, noun: Noun, state: State) void {
         self.states.getPtr(noun).?.insert(state);
+    }
+
+    pub fn playerCanPush(self: Rules, e: Entity) bool {
+        return switch (e.block) {
+            .Noun => true,
+            .State => true,
+            .Is => true,
+            .And => true,
+            .Object => |noun| self.is(noun, .Push) or self.is(noun, .You),
+        };
+    }
+
+    // TODO: needs to know the mover entity as well for layers (IS FLOAT)
+    pub fn isStop(self: Rules, e: Entity) bool {
+        return switch (e.block) {
+            .Noun => false,
+            .State => false,
+            .Is => false,
+            .And => false,
+            .Object => |noun| self.is(noun, .Stop),
+        };
     }
 
     pub fn clear(self: *Rules) void {
@@ -125,49 +202,13 @@ pub const Noun = enum {
 pub const State = enum {
     You,
     Push,
+    Stop,
 };
 
 pub const Dir = struct {
-    pub const UP: Pos = .{ 0, 1 };
-    pub const DOWN: Pos = .{ 0, -1 };
+    pub const UP: Pos = .{ 0, -1 };
+    pub const DOWN: Pos = .{ 0, 1 };
     pub const LEFT: Pos = .{ -1, 0 };
     pub const RIGHT: Pos = .{ 1, 0 };
 };
 
-const expectEq = std.testing.expectEqual;
-test "world repr sanity" {
-    var w = Level.init(std.heap.c_allocator, .{ 20, 30 });
-
-    try expectEq(w.rules.is(.Baba, .You), false);
-    w.rules.set(.Baba, .You);
-    try expectEq(w.rules.is(.Baba, .You), true);
-    w.rules.clear();
-    try expectEq(w.rules.is(.Baba, .You), false);
-
-    try expectEq(w.getEntity(.{ 0, 0 }), null);
-    try w.entities.append(.{ .pos = .{ 1, 0 }, .block = .{ .Object = .Rock }});
-    try w.entities.append(.{ .pos = .{ 0, 0 }, .block = .{ .Object = .Baba }});
-    try w.entities.append(.{ .pos = .{ 1, 10 }, .block = .{ .Object = .Wall }});
-    try w.entities.append(.{ .pos = .{ 5, 0 }, .block = .{ .State = .You }});
-    try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Baba });
-
-    try w.entities.append(.{ .pos = .{ 1, 20 }, .block = .{ .Noun = .Baba }});
-    w.swapNouns(.Baba, .Wall);
-    try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Wall });
-    try expectEq(w.getEntity(.{ 1, 20 }).?.block, .{ .Noun = .Baba });  // swapNouns doesn't effect the words. 
-    w.swapNouns(.Wall, .Baba);
-    try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Baba });
-    try expectEq(w.getEntity(.{ 1, 10 }).?.block, .{ .Object = .Baba });
-
-    try w.entities.append(.{ .pos = .{ 2, 20 }, .block = .Is});
-    try w.entities.append(.{ .pos = .{ 3, 20 }, .block = .{ .Noun = .Wall }});
-    w.calculateRules();
-    try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Wall });
-    try expectEq(w.getEntity(.{ 1, 10 }).?.block, .{ .Object = .Wall });
-
-    // const save = @import("save.zig");
-    // const data = try save.saveLevel(w, std.heap.c_allocator);
-    // std.debug.print("{!s}", .{data});
-    // const w2 = try save.loadLevel(data, std.heap.c_allocator);
-    // std.debug.print("{!s}", .{ save.saveLevel(w2, std.heap.c_allocator) });
-}

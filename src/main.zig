@@ -6,5 +6,5 @@ pub fn main() !void {
 
 
 test {
-    _ = @import("world.zig");
+    _ = @import("tests.zig");
 }
