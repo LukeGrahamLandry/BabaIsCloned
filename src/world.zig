@@ -5,15 +5,31 @@ pub const Pos = @Vector(2, i32);
 // TODO: for undo, instead of doing work to reverse things like noun replacements, could just replay all inputs minus one. is anything random? 
 pub const Level = struct {
     entities: std.ArrayList(Entity),
+    actionHistory: std.ArrayList(Input),  // TODO: include in save file. 
     rules: Rules,
     size: Pos,
     rulesDirty: bool = false,
     pub fn init(alloc: std.mem.Allocator, size: Pos) Level {
         return .{
             .entities = std.ArrayList(Entity).init(alloc),
+            .actionHistory = std.ArrayList(Input).init(alloc),
             .rules = Rules.init(),
             .size = size,
         };
+    }
+
+    pub fn handleInput(self: *Level, in: Input) !void {
+        switch (in) {
+            .Left => self.movePlayer(Dir.LEFT),
+            .Right => self.movePlayer(Dir.RIGHT),
+            .Up => self.movePlayer(Dir.UP),
+            .Down => self.movePlayer(Dir.DOWN),
+            .Wait => {},
+        }
+        self.tick();
+        // TODO: if you already lost, dont keep recording moves that do nothing. they cluter the undo history. 
+        //       would be fixed if tracked transations that actually made a change instead. 
+        try self.actionHistory.append(in);
     }
 
     pub fn tick(self: *Level) void {
@@ -30,7 +46,7 @@ pub const Level = struct {
             switch (e.block) {
                 .Object => |noun| {
                     if (self.rules.is(noun, .You)) {
-                        self.resolveMove(e, dir);
+                        _ = self.resolveMove(e, dir);
                     }
                 },
                 else => {}
@@ -67,8 +83,8 @@ pub const Level = struct {
         return true;
     }
 
-    // Also does noun replacements. 
-    // TODO: that's a special type of transaction. 
+    // Also does noun replacements. // TODO: that's a special type of transaction. 
+    // TOOD: needs to be deterministic over entity order. update a new rules struct and then swap at the end. and then do all noun swaps. tick somewhere in there. test correct order  
     pub fn updateRules(self: *Level) void {
         self.rules.clear();
         for (self.entities.items) |e| {
@@ -114,6 +130,20 @@ pub const Level = struct {
                 else => {}
             }
         }
+    }
+
+    pub fn deinit(self: *Level) void {
+        self.entities.deinit();
+        self.actionHistory.deinit();
+    }
+
+    pub fn clone(self: Level, alloc: std.mem.Allocator) !Level {
+        var w = Level.init(alloc, self.size);
+        w.entities = try self.entities.clone();
+        w.actionHistory = try w.actionHistory.clone();
+        w.updateRules();
+        return w;
+
     }
 
     // TODO: sad slow noises. maybe have a bit field showing which squares have a dude in them. empty is the common case. 
@@ -190,9 +220,17 @@ pub const Rules = struct {
     }
 };
 
+pub const Input = enum {
+    Left,
+    Right,
+    Up,
+    Down,
+    Wait
+};
+
 pub const Entity = struct {
     block: Block,
-    pos: Pos
+    pos: Pos,
 };
 
 pub const Block = union(BlockType) {
@@ -204,6 +242,16 @@ pub const Block = union(BlockType) {
 
     pub fn isText(self: Block) bool {
         return self == @field(Block, "Object");
+    }
+
+
+    pub fn name(self: Block) []const u8 {
+        return switch (self) {
+            .Noun => |noun| @tagName(noun),
+            .Object => |noun| @tagName(noun),
+            .State => |state| @tagName(state),
+            else => @tagName(self),
+        };
     }
 };
 

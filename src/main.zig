@@ -8,13 +8,17 @@ const sgl = sokol.gl;
 const sgapp = sokol.app_gfx_glue;
 const math = @import("std").math;
 const sdtx = sokol.debugtext;
+const save = @import("save.zig");
 
 
 const state = struct {
     var pass_action: sg.PassAction = .{};
     var pip3d: sgl.Pipeline = .{};
     var level: W.Level = undefined;
+    var initialLevel: W.Level = undefined;
 };
+
+const alloc = std.heap.c_allocator;
 
 export fn init() void {
     sg.setup(.{
@@ -43,9 +47,60 @@ export fn init() void {
     sdtx_desc.fonts[0] = sdtx.fontKc854();
     sdtx.setup(sdtx_desc);
 
-    state.level = defaultLevel() catch @panic("OOM");
+    state.level = loadSavedLevel("save.baba") catch defaultLevel() catch @panic("OOM");
+    state.initialLevel = state.level.clone(alloc) catch @panic("OOM");
 }
 
+export fn event_handler(event: [*c]const sapp.Event) void {
+    switch (event.*.type) {
+        .KEY_DOWN => {
+            switch (event.*.key_code) {
+                .ESCAPE => sapp.requestQuit(),
+                .W => state.level.handleInput(.Up) catch @panic("OOM"),
+                .A => state.level.handleInput(.Left) catch @panic("OOM"),
+                .S => state.level.handleInput(.Down) catch @panic("OOM"),
+                .D => state.level.handleInput(.Right) catch @panic("OOM"),
+                .SPACE => state.level.handleInput(.Wait) catch @panic("OOM"),
+                .Z => {
+                    // TODO: hack.
+                    var hist = state.level.actionHistory.items;
+                    if (hist.len > 0) {
+                        var newLevel = state.initialLevel.clone(alloc) catch @panic("OOM");
+                        for (hist[0..hist.len-1]) |in| {
+                            newLevel.handleInput(in) catch @panic("OOM");
+                        }
+                        state.level.deinit();  // TODO: extra cringe that every undo reallocates. 
+                        state.level = newLevel;
+                    }
+                },
+                else => {}
+            }
+        },
+        .QUIT_REQUESTED => {
+            saveToFile("save.baba", state.level) catch {
+                std.debug.print("Failed to save.", .{});
+            };
+        },
+        else => {}
+    }
+}
+
+
+fn loadSavedLevel(path: []const u8) !W.Level {
+    const saveFile = try std.fs.cwd().openFile(path, .{});
+    defer saveFile.close();
+    const data = try saveFile.reader().readAllAlloc(alloc, std.math.maxInt(u16));
+    defer alloc.free(data);
+    return try save.loadLevel(data, alloc);
+}
+
+fn saveToFile(path: []const u8, level: W.Level) !void {
+    const saveFile = try std.fs.cwd().createFile(path, .{});
+    defer saveFile.close();
+    const data = try save.saveLevel(level, alloc);
+    defer alloc.free(data);
+    try saveFile.writer().writeAll(data);
+}
 
 export fn frame() void {
     // frame time 'normalized' to 60fps
@@ -69,22 +124,33 @@ export fn frame() void {
         sgl.scale(scale, scale, 1.0);
         sgl.beginQuads();
 
+        sdtx.font(0);
+        sdtx.color3b(255, 128, 0);
+        const invTextScale = 1.0;  // 1.0 means 8x8 pixel chars. 0.5 means 16x16 pixel chars. // TODO: set based on fiting 3 letters in a block 
+        const pixToCharGrid = 1.0 / 8.0 / invTextScale;
+        const logicToCharGrid = quadSizePix * pixToCharGrid;
+        sdtx.canvas(sapp.widthf() * invTextScale, sapp.heightf() * invTextScale);
+
         for (state.level.entities.items) |e| {
-            drawOneQuad(e.pos, .{ .r=255, .g=0, .b=255 }, .{quadWidthRat, quadHeightRat});
+            const colour: Colour = if (e.block.isText()) .{ .r=255, .g=255, .b=255 } else .{ .r=255, .g=255, .b=128 };
+            drawOneQuad(e.pos, colour, .{quadWidthRat, quadHeightRat});
+
+            const x = @as(f32, @floatFromInt(e.pos[0]));
+            const y = @as(f32, @floatFromInt(e.pos[1]));
+            sdtx.origin(x * logicToCharGrid, y * logicToCharGrid);
+            sdtx.pos(0, 0);
+            const s = e.block.name();
+            if (s.len > 2) {
+                sdtx.print("{s}", .{s[0..2]});
+                sdtx.pos(0, 1);
+                sdtx.print("{s}", .{s[2..]});
+            } else {
+                sdtx.print("{s}", .{s});
+            }
         }
 
         sgl.end();
     }
-
-    const invTextScale = 2.0;  // 1.0 means 8x8 pixel chars. 0.5 means 16x16 pixel chars. 
-    sdtx.canvas(sapp.widthf() * invTextScale, sapp.heightf() * invTextScale);
-    sdtx.origin(3, 3);
-
-    const font = 0;
-    sdtx.font(font);
-    sdtx.color3b(255, 128, 0);
-    sdtx.print("Hello '{}'!lk;dsk;lask;ladk;ldsak;ldas;kldas;klad;ksl;kdlasl;kasd;kdlaskl;ads\n", .{1234});
-    sdtx.moveY(2);
 
     sg.beginDefaultPass(state.pass_action, sapp.width(), sapp.height());
     sgl.draw();
@@ -94,14 +160,14 @@ export fn frame() void {
 }
 
 
-const Color = struct {
+const Colour = struct {
     r: u8,
     g: u8,
     b: u8,
 };
 
 // Requires context setup before call. 
-fn drawOneQuad(pos: W.Pos, c: Color, size: @Vector(2, f32)) void {
+fn drawOneQuad(pos: W.Pos, c: Colour, size: @Vector(2, f32)) void {
     const x = @as(f32, @floatFromInt(pos[0]));
     const y = @as(f32, @floatFromInt(pos[1]));
     // Changing coordinate systems: 
@@ -132,6 +198,7 @@ pub fn main() !void {
         .init_cb = init,
         .frame_cb = frame,
         .cleanup_cb = cleanup,
+        .event_cb = event_handler,
         .width = 512,
         .height = 512,
         .sample_count = 4,
@@ -148,7 +215,7 @@ test {
 }
 
 fn defaultLevel() !W.Level {
-    var w = W.Level.init(std.heap.c_allocator, .{ 10, 20 });
+    var w = W.Level.init(std.heap.c_allocator, .{ 10, 10 });
     try w.addEntity(.{ 1, 5 }, .{ .Noun = .Baba });
     try w.addEntity(.{ 2, 5 }, .Is);
     try w.addEntity(.{ 3, 5 }, .{ .State = .You });
@@ -157,5 +224,9 @@ fn defaultLevel() !W.Level {
     try w.addEntity(.{ 5, 0 }, .{ .Noun = .Wall });
     try w.addEntity(.{ 6, 0 }, .Is);
     try w.addEntity(.{ 7, 0 }, .{ .State = .Stop });
+    try w.addEntity(.{ 5, 2 }, .{ .Object = .Rock });
+    try w.addEntity(.{ 5, 1 }, .{ .Object = .Baba });
+    try w.addEntity(.{ 5, 8 }, .{ .Object = .Wall });
+    w.updateRules();
     return w;
 }
