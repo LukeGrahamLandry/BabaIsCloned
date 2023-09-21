@@ -2,10 +2,12 @@ const std = @import("std");
 const assert = std.debug.assert;
 pub const Pos = @Vector(2, i32);
 
+// TODO: for undo, instead of doing work to reverse things like noun replacements, could just replay all inputs minus one. is anything random? 
 pub const Level = struct {
     entities: std.ArrayList(Entity),
     rules: Rules,
     size: Pos,
+    rulesDirty: bool = false,
     pub fn init(alloc: std.mem.Allocator, size: Pos) Level {
         return .{
             .entities = std.ArrayList(Entity).init(alloc),
@@ -14,14 +16,21 @@ pub const Level = struct {
         };
     }
 
+    pub fn tick(self: *Level) void {
+        if (self.rulesDirty) {
+            self.updateRules();
+            self.rulesDirty = false;
+        }
+        // TODO: X is MOVE
+        // TODO: this gets called when you move or wait
+    }
+
     pub fn movePlayer(self: *Level, dir: Pos) void {
         for (self.entities.items) |*e| {
             switch (e.block) {
                 .Object => |noun| {
                     if (self.rules.is(noun, .You)) {
-                        if (!self.resolveMove(e, dir)) {
-                            // Hit something, so can't go that way. 
-                        }
+                        self.resolveMove(e, dir);
                     }
                 },
                 else => {}
@@ -40,20 +49,27 @@ pub const Level = struct {
                 return false;
             }
             if (self.rules.playerCanPush(other.*)) {
+                // We need to push the thing out of the way. 
                 if (!self.resolveMove(other, dir)) {
+                    // Something down the line was blocked, so nobody can move. 
                     return false;
                 }
             } else {
                 // Not stop and not push, so just pass through. 
-            }
-            
+            }   
         }
 
+        // Nothing down the line stopped us, so its safe to update our position. 
         e.pos += dir;
+        if (e.block.isText()) {
+            self.rulesDirty = true;
+        }
         return true;
     }
 
-    pub fn calculateRules(self: *Level) void {
+    // Also does noun replacements. 
+    // TODO: that's a special type of transaction. 
+    pub fn updateRules(self: *Level) void {
         self.rules.clear();
         for (self.entities.items) |e| {
             switch (e.block) {
@@ -100,8 +116,9 @@ pub const Level = struct {
         }
     }
 
-    // TODO: sad slow noises. maybe have a bit field showing which squares have a dude in them. 
+    // TODO: sad slow noises. maybe have a bit field showing which squares have a dude in them. empty is the common case. 
     // TODO: a square can have multiple dudes (NOUN is float). 
+    // Unsafe. Must update rulesDirty if mutate through this. Also don't store the pointer.
     pub fn getEntity(self: *Level, pos: Pos) ?*Entity {
         for (self.entities.items) |*e| {
             if (@reduce(.And, e.pos == pos)) {
@@ -117,6 +134,13 @@ pub const Level = struct {
 
     pub fn offBoard(self: Level, pos: Pos) bool {
         return pos[0] < 0 or pos[1] < 0 or pos[0] >= self.size[0] or pos[1] >= self.size[1];   
+    }
+
+    pub fn addEntity(self: *Level, pos: Pos, block: Block) !void {
+        if (block.isText()) {
+            self.rulesDirty = true;
+        }
+        try self.entities.append(.{ .pos=pos, .block=block });
     }
 
     pub fn debugPrint(self: Level) void {
@@ -140,22 +164,16 @@ pub const Rules = struct {
 
     pub fn playerCanPush(self: Rules, e: Entity) bool {
         return switch (e.block) {
-            .Noun => true,
-            .State => true,
-            .Is => true,
-            .And => true,
             .Object => |noun| self.is(noun, .Push) or self.is(noun, .You),
+            else => true,
         };
     }
 
     // TODO: needs to know the mover entity as well for layers (IS FLOAT)
     pub fn isStop(self: Rules, e: Entity) bool {
         return switch (e.block) {
-            .Noun => false,
-            .State => false,
-            .Is => false,
-            .And => false,
             .Object => |noun| self.is(noun, .Stop),
+            else => false,
         };
     }
 
@@ -182,7 +200,11 @@ pub const Block = union(BlockType) {
     State: State,
     Object: Noun,
     Is,
-    And
+    And,
+
+    pub fn isText(self: Block) bool {
+        return self == @field(Block, "Object");
+    }
 };
 
 pub const BlockType = enum {
@@ -190,19 +212,22 @@ pub const BlockType = enum {
     State,
     Object,
     Is,
-    And
+    And,
 };
 
 pub const Noun = enum {
     Baba,
     Rock,
-    Wall
+    Wall,
+    Flag,
 };
 
 pub const State = enum {
     You,
     Push,
     Stop,
+    Move,
+    Win,
 };
 
 pub const Dir = struct {
@@ -211,4 +236,3 @@ pub const Dir = struct {
     pub const LEFT: Pos = .{ -1, 0 };
     pub const RIGHT: Pos = .{ 1, 0 };
 };
-

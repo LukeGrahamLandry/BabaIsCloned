@@ -12,13 +12,13 @@ test "world repr sanity" {
     try expectEq(w.rules.is(.Baba, .You), false);
 
     try expectEq(w.getEntity(.{ 0, 0 }), null);
-    try w.entities.append(.{ .pos = .{ 1, 0 }, .block = .{ .Object = .Rock }});
-    try w.entities.append(.{ .pos = .{ 0, 0 }, .block = .{ .Object = .Baba }});
-    try w.entities.append(.{ .pos = .{ 1, 10 }, .block = .{ .Object = .Wall }});
-    try w.entities.append(.{ .pos = .{ 5, 0 }, .block = .{ .State = .You }});
+    try w.addEntity(.{ 1, 0 }, .{ .Object = .Rock });
+    try w.addEntity(.{ 0, 0 }, .{ .Object = .Baba });
+    try w.addEntity(.{ 1, 10 }, .{ .Object = .Wall });
+    try w.addEntity(.{ 5, 0 }, .{ .State = .You });
     try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Baba });
 
-    try w.entities.append(.{ .pos = .{ 1, 20 }, .block = .{ .Noun = .Baba }});
+    try w.addEntity(.{ 1, 20 }, .{ .Noun = .Baba });
     w.swapNouns(.Baba, .Wall);
     try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Wall });
     try expectEq(w.getEntity(.{ 1, 20 }).?.block, .{ .Noun = .Baba });  // swapNouns doesn't effect the words. 
@@ -26,9 +26,9 @@ test "world repr sanity" {
     try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Baba });
     try expectEq(w.getEntity(.{ 1, 10 }).?.block, .{ .Object = .Baba });
 
-    try w.entities.append(.{ .pos = .{ 2, 20 }, .block = .Is});
-    try w.entities.append(.{ .pos = .{ 3, 20 }, .block = .{ .Noun = .Wall }});
-    w.calculateRules();
+    try w.addEntity(.{ 2, 20 }, .Is);
+    try w.addEntity(.{ 3, 20 }, .{ .Noun = .Wall });
+    w.updateRules();
     try expectEq(w.getEntity(.{ 0, 0 }).?.block, .{ .Object = .Wall });
     try expectEq(w.getEntity(.{ 1, 10 }).?.block, .{ .Object = .Wall });
 
@@ -42,19 +42,19 @@ test "world repr sanity" {
 test "move and push" {
     var w = W.Level.init(std.heap.c_allocator, .{ 10, 20 });
 
-    try w.entities.append(.{ .pos = .{ 1, 5 }, .block = .{ .Noun = .Baba }});
-    try w.entities.append(.{ .pos = .{ 2, 5 }, .block = .Is});
-    try w.entities.append(.{ .pos = .{ 3, 5 }, .block = .{ .State = .You }});
-    try w.entities.append(.{ .pos = .{ 2, 4 }, .block = .{ .Noun = .Rock }});
-    try w.entities.append(.{ .pos = .{ 2, 6 }, .block = .{ .State = .Push }});
-    try w.entities.append(.{ .pos = .{ 5, 0 }, .block = .{ .Noun = .Wall }});
-    try w.entities.append(.{ .pos = .{ 6, 0 }, .block = .Is});
-    try w.entities.append(.{ .pos = .{ 7, 0 }, .block = .{ .State = .Stop }});
-    w.calculateRules();
+    try w.addEntity(.{ 1, 5 }, .{ .Noun = .Baba });
+    try w.addEntity(.{ 2, 5 }, .Is);
+    try w.addEntity(.{ 3, 5 }, .{ .State = .You });
+    try w.addEntity(.{ 2, 4 }, .{ .Noun = .Rock });
+    try w.addEntity(.{ 2, 6 }, .{ .State = .Push });
+    try w.addEntity(.{ 5, 0 }, .{ .Noun = .Wall });
+    try w.addEntity(.{ 6, 0 }, .Is);
+    try w.addEntity(.{ 7, 0 }, .{ .State = .Stop });
+    w.updateRules();
 
-    try w.entities.append(.{ .pos = .{ 1, 12 }, .block = .{ .Object = .Rock }});
-    try w.entities.append(.{ .pos = .{ 0, 11 }, .block = .{ .Object = .Baba }});
-    try w.entities.append(.{ .pos = .{ 2, 18 }, .block = .{ .Object = .Wall }});
+    try w.addEntity(.{ 1, 12 }, .{ .Object = .Rock });
+    try w.addEntity(.{ 0, 11 }, .{ .Object = .Baba });
+    try w.addEntity(.{ 2, 18 }, .{ .Object = .Wall });
     try expectEq(w.getEntity(.{ 0, 11 }).?.block, .{ .Object = .Baba });
 
     // can't go off screen
@@ -87,7 +87,7 @@ test "move and push" {
 
     // dont stop if not stop
     w.getEntity(.{ 6, 0 }).?.block = .{ .Object=.Wall }; // remove the Is 
-    w.calculateRules();
+    w.updateRules();
     w.movePlayer(W.Dir.RIGHT);
     w.movePlayer(W.Dir.RIGHT);
     try expectEq(w.getEntity(.{ 3, 18 }).?.block, .{ .Object = .Baba });

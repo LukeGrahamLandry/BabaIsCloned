@@ -60,6 +60,7 @@ pub fn saveLevel(self: W.Level, alloc: std.mem.Allocator) ![] const u8 {
 
 const ParseErr = error.LevelParseFailed;
 
+// TODO: combine the header stuff into a pallet so tests can share
 pub fn loadLevel(data: [] const u8, alloc: std.mem.Allocator) !W.Level {
     var self = W.Level.init(alloc, .{ 0, 0 });
     var lines = std.mem.splitScalar(u8, data, '\n');
@@ -118,16 +119,16 @@ pub fn loadLevel(data: [] const u8, alloc: std.mem.Allocator) !W.Level {
             if (std.ascii.isUpper(c)) {
                 const index = std.ascii.toLower(c);
                 const noun = nouns[index] orelse return ParseErr;
-                try self.entities.append(.{ .pos=pos, .block=.{ .Object=noun }});
+                try self.addEntity(pos, .{ .Object=noun });
             } else {
                 if (nouns[c]) |noun| {
-                    try self.entities.append(.{ .pos=pos, .block=.{ .Noun=noun }});
+                    try self.addEntity(pos, .{ .Noun=noun });
                 } else if (states[c]) |state| {
-                    try self.entities.append(.{ .pos=pos, .block=.{ .State=state }});
+                    try self.addEntity(pos, .{ .State=state });
                 } else if (c == '=') {
-                    try self.entities.append(.{ .pos=pos, .block=.Is});
+                    try self.addEntity(pos, .Is);
                 } else if (c == '+') {
-                    try self.entities.append(.{ .pos=pos, .block=.And});
+                    try self.addEntity(pos, .And);
                 } else {
                     return ParseErr;
                 }
@@ -135,13 +136,12 @@ pub fn loadLevel(data: [] const u8, alloc: std.mem.Allocator) !W.Level {
         }
     }
 
-    std.debug.print("SIZE: {}\n", .{pos});
     self.size = pos;
-    std.debug.print("{}\n", .{self});
     return self;
     
 }
 
+// TODO: error if too many types in one pallet 
 const letters = "abcdefghijklmnopqrstuvwxyz";
 const numbers = "0123456789";
 fn getOrAdd(comptime t: type, opts: [] const u8, map: *std.EnumMap(t, u8), noun: t) u8 {
