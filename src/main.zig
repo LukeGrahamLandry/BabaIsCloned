@@ -10,6 +10,8 @@ const math = @import("std").math;
 const sdtx = sokol.debugtext;
 const save = @import("save.zig");
 
+const SAVE_FOLDER = "zig-out";
+const SAVE_FILE = SAVE_FOLDER ++ "/save.baba";
 
 const state = struct {
     var pass_action: sg.PassAction = .{};
@@ -47,10 +49,11 @@ export fn init() void {
     sdtx_desc.fonts[0] = sdtx.fontKc854();
     sdtx.setup(sdtx_desc);
 
-    state.level = loadSavedLevel("save.baba") catch defaultLevel() catch @panic("OOM");
+    state.level = loadSavedLevel(SAVE_FILE) catch defaultLevel() catch @panic("OOM");
     state.initialLevel = state.level.clone(alloc) catch @panic("OOM");
 }
 
+// TODO: wrap with zig calling convention func so i can use try. 
 export fn event_handler(event: [*c]const sapp.Event) void {
     switch (event.*.type) {
         .KEY_DOWN => {
@@ -73,11 +76,14 @@ export fn event_handler(event: [*c]const sapp.Event) void {
                         state.level = newLevel;
                     }
                 },
+                .R => {
+                    state.level.copyFrom(state.initialLevel) catch @panic("OOM");
+                },
                 else => {}
             }
         },
         .QUIT_REQUESTED => {
-            saveToFile("save.baba", state.level) catch {
+            saveToFile(SAVE_FILE, state.level) catch {
                 std.debug.print("Failed to save.", .{});
             };
         },
@@ -95,6 +101,7 @@ fn loadSavedLevel(path: []const u8) !W.Level {
 }
 
 fn saveToFile(path: []const u8, level: W.Level) !void {
+    try std.fs.cwd().makePath(SAVE_FOLDER);
     const saveFile = try std.fs.cwd().createFile(path, .{});
     defer saveFile.close();
     const data = try save.saveLevel(level, alloc);
@@ -117,7 +124,8 @@ export fn frame() void {
     const quadSizePix = screenSize / quadCount;
     const quadWidthRat = quadSizePix / dw;
     const quadHeightRat = quadSizePix / dh;
-    
+
+
     {
         const scale: f32 = 1.0;
         sgl.defaults();
@@ -126,11 +134,14 @@ export fn frame() void {
 
         sdtx.font(0);
         sdtx.color3b(255, 128, 0);
-        // TODO: clearly my math is wrong. want to make text bigger so scales with quadSizePix
-        const invTextScale = 1.0;  // 1.0 means 8x8 pixel chars. 0.5 means 16x16 pixel chars. // TODO: set based on fiting 3 letters in a block 
-        const pixToCharGrid = 1.0 / 8.0 / invTextScale;
-        const logicToCharGrid = quadSizePix * pixToCharGrid;
-        sdtx.canvas(sapp.widthf() * invTextScale, sapp.heightf() * invTextScale);
+        const charPerQuad = 3.0;
+        const charSizePix = quadSizePix / charPerQuad;
+        const textScale = charSizePix / 8.0;  // 1.0 means 8x8 pixel chars. 2.0 means 16x16 pixel chars. // TODO: set based on fiting 3 letters in a block 
+        const logicToCharGrid = quadSizePix / charSizePix;
+        sdtx.canvas(sapp.widthf() / textScale, sapp.heightf() / textScale);
+
+        // Shows which part of the screen you can actually be in. 
+        drawBackground(.{ .r=20, .g=20, .b=20 }, .{quadWidthRat, quadHeightRat}, state.level.size);
 
         for (state.level.entities.items) |e| {
             const colour: Colour = if (e.block.isText()) .{ .r=255, .g=255, .b=255 } else .{ .r=255, .g=255, .b=128 };
@@ -141,13 +152,30 @@ export fn frame() void {
             sdtx.origin(x * logicToCharGrid, y * logicToCharGrid);
             sdtx.pos(0, 0);
             const s = e.block.name();
-            if (s.len > 2) {
-                sdtx.print("{s}", .{s[0..2]});
-                sdtx.pos(0, 1);
-                sdtx.print("{s}", .{s[2..]});
-            } else {
-                sdtx.print("{s}", .{s});
+            switch (s.len) {
+                0...3 => {
+                    sdtx.print("{s}", .{s});
+                },
+                4 => {
+                    sdtx.print("{s}", .{s[0..2]});
+                    sdtx.pos(0, 1);
+                    sdtx.print("{s}", .{s[2..]});
+                },
+                5...6 => {
+                    sdtx.print("{s}", .{s[0..3]});
+                    sdtx.pos(0, 1);
+                    sdtx.print("{s}", .{s[3..]});
+                },
+                else => {
+                    std.debug.panic("TODO: long word", .{});
+                }
             }
+        }
+
+        switch (state.level.state) {
+            .Win => alertText("You Win!"),
+            .Lose => alertText("Press 'r' to restart."),
+            .None => {},
         }
 
         sgl.end();
@@ -162,6 +190,14 @@ export fn frame() void {
     _ = W.frameArena.reset(.retain_capacity);
 }
 
+fn alertText(comptime msg: []const u8) void {
+    const winTextScale = 3.0;
+    sdtx.color3b(255, 0, 0);
+    sdtx.canvas(sapp.widthf() / winTextScale, sapp.heightf() / winTextScale);
+    sdtx.origin(0, 0);
+    sdtx.pos(0, 0);
+    sdtx.print(msg, .{});
+}
 
 const Colour = struct {
     r: u8,
@@ -189,6 +225,23 @@ fn drawOneQuad(pos: W.Pos, c: Colour, size: @Vector(2, f32)) void {
     sgl.v2fC3b(right, top, c.r, c.g, c.b);
     sgl.v2fC3b(left, top, c.r, c.g, c.b);
 }
+
+// TODO: one func used by ^ that lets you give start and stop pos in logic space. 
+fn drawBackground(c: Colour, size: @Vector(2, f32), worldSize: W.Pos) void {
+    const w = @as(f32, @floatFromInt(worldSize[0]));
+    const h = @as(f32, @floatFromInt(worldSize[1]));
+    const left = -1.0;
+    const right = (w * (size[0] * 2.0)) - 1;
+    const top = 1.0;
+    const bottom = (-h * (size[1] * 2.0)) + 1;
+    
+    // Center is (0, 0). Screen is 2x2. Top left is (-1, 1). Those are affected by the scale.
+    sgl.v2fC3b(left, bottom, c.r, c.g, c.b);
+    sgl.v2fC3b(right, bottom, c.r, c.g, c.b);
+    sgl.v2fC3b(right, top, c.r, c.g, c.b);
+    sgl.v2fC3b(left, top, c.r, c.g, c.b);
+}
+
 
 export fn cleanup() void {
     sgl.shutdown();

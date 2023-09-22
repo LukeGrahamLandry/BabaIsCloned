@@ -12,6 +12,8 @@ pub const Level = struct {
     rules: Rules,
     size: Pos,
     rulesDirty: bool = false,
+    somethingChanged: bool = false,
+    state: GameState = .None,
     pub fn init(alloc: std.mem.Allocator, size: Pos) Level {
         return .{
             .entities = std.ArrayList(Entity).init(alloc),
@@ -22,6 +24,7 @@ pub const Level = struct {
     }
 
     pub fn handleInput(self: *Level, in: Input) !void {
+        self.somethingChanged = false;
         switch (in) {
             .Left => self.movePlayer(Dir.LEFT),
             .Right => self.movePlayer(Dir.RIGHT),
@@ -30,22 +33,90 @@ pub const Level = struct {
             .Wait => {},
         }
         self.tick();
-        // TODO: if you already lost, dont keep recording moves that do nothing. they cluter the undo history. 
-        //       would be fixed if tracked transations that actually made a change instead. 
-        try self.actionHistory.append(in);
+
+        assert(!self.rulesDirty or self.somethingChanged); // rules need update, something must have changed. 
+        if (self.somethingChanged) {
+            self.checkDefeat();
+            try self.actionHistory.append(in);
+
+            if (self.levelWon()) {
+                self.state = .Win;
+            } else if (self.nobodyIsYou()) {
+                self.state = .Lose;
+            }
+        }
+    }
+    
+    fn checkDefeat(self: *Level) void {
+        if (!self.rules.exists(.Defeat) or !self.rules.exists(.You)) {
+            return;
+        }
+
+        var i = self.entities.items.len - 1;
+        while (i > 0) {
+            i -= 1;
+            const e = self.entities.items[i];
+            switch (e.block) {
+                .Object => |noun| {
+                    if (self.rules.is(noun, .You)) {
+                        if (self.posContains(e.pos, .Defeat)) {
+                            _ = self.entities.swapRemove(i);
+                            self.somethingChanged = true;
+                        }
+                    }
+                },
+                else => {}
+            }
+        }   
+    }
+    
+    pub fn levelWon(self: *Level) bool {
+        for (self.allOfState(.Win)) |win| {
+            if (self.posContains(win.pos, .You)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    pub fn nobodyIsYou(self: *Level) bool {
+        return self.allOfState(.You).len == 0;
+    }
+
+    fn posContains(self: *Level, pos: Pos, state: State) bool {
+        if (!self.rules.exists(state)) {
+            return false;  // No rule causes the state so won't find anything. 
+        }
+
+        for (self.getEntity(pos)) |check| {
+            switch (check.block) {
+                .Object => |noun| {
+                    if (self.rules.is(noun, state)) {
+                        return true;
+                    }
+                },
+                else => {}
+            }
+        }
+        return false;
     }
 
     pub fn tick(self: *Level) void {
         if (self.rulesDirty) {
             self.updateRules();
             self.rulesDirty = false;
-            self.debugPrint();
+            self.rules.debugPrint();
         }
         // TODO: X is MOVE
         // TODO: this gets called when you move or wait
     }
 
     pub fn movePlayer(self: *Level, dir: Pos) void {
+        if (!self.rules.exists(.You)) {
+            return;
+        }
+
         for (self.entities.items) |*e| {
             switch (e.block) {
                 .Object => |noun| {
@@ -55,7 +126,6 @@ pub const Level = struct {
                 },
                 else => {}
             }
-            
         }
     }
 
@@ -85,6 +155,7 @@ pub const Level = struct {
 
         // Nothing down the line stopped us, so its safe to update our position. 
         e.pos += dir;
+        self.somethingChanged = true;
         if (e.block.isText()) {
             self.rulesDirty = true;
         }
@@ -129,13 +200,14 @@ pub const Level = struct {
             }
         }
     }
-
+    
     pub fn swapNouns(self: *Level, from: Noun, to: Noun) void {
         for (self.entities.items) |*e| {
             switch (e.block) {
                 .Object => |*found| {
                     if (found.* == from) {
                         found.* = to;
+                        self.somethingChanged = true;
                     }
                 },
                 else => {}
@@ -162,16 +234,38 @@ pub const Level = struct {
         self.rules = other.rules;
         self.rulesDirty = other.rulesDirty;
         self.size = other.size;
+        self.state = other.state;
+        self.somethingChanged = other.somethingChanged;
     }
 
     // TODO: sad slow noises. maybe have a bit field showing which squares have a dude in them. empty is the common case. 
-    // TODO: a square can have multiple dudes (NOUN is float). 
-    // Unsafe. Must update rulesDirty if mutate through this. Also don't store the pointer.
+    // Unsafe. Must update rulesDirty if mutate through this. 
+    // This has a scary lifetime! Pointers are invalidated if the list is modified. The slice is in temp alloc so invalid at end of frame. 
     pub fn getEntity(self: *Level, pos: Pos) []*Entity {
         var found = std.ArrayList(*Entity).init(TEMP);
         for (self.entities.items) |*e| {
             if (@reduce(.And, e.pos == pos)) {
                 found.append(e) catch unreachable;
+            }
+        }
+        return found.items;
+    }
+
+    // TODO: anything that switches to select object must actually accept text as well because text can be states. 
+    pub fn allOfState(self: *Level, state: State) []*Entity {
+        if (!self.rules.exists(state)){
+            return &[_]*Entity{};  // No rule causes the state so won't find anything. 
+        }
+
+        var found = std.ArrayList(*Entity).init(TEMP);
+        for (self.entities.items) |*e| {
+            switch (e.block) {
+                .Object => |noun| {
+                    if (self.rules.is(noun, state)) {
+                        found.append(e) catch @panic("OOM");
+                    }
+                },
+                else => {}
             }
         }
         return found.items;
@@ -198,20 +292,14 @@ pub const Level = struct {
         const info = @import("save.zig").saveLevel(self, temp.allocator());
         std.debug.print("--- LEVEL ---\n", .{});
         std.debug.print("{!s}\n", .{info});
-        std.debug.print("--- RULES ---\n", .{});
-        inline for (comptime std.enums.values(Noun)) |noun| {
-            inline for (comptime std.enums.values(State)) |state| {
-                if (self.rules.is(noun, state)) {
-                    std.debug.print("{} IS {}\n", .{ noun, state });
-                }
-            }
-        }
+        self.rules.debugPrint();
         std.debug.print("--- END ---\n", .{});
     }
 };
 
 pub const Rules = struct {
-    states: std.EnumMap(Noun, std.EnumSet(State)), 
+    states: std.EnumMap(Noun, std.EnumSet(State)) = .{}, 
+    activeStates: std.EnumSet(State) = .{},
 
     pub fn is(self: Rules, noun: Noun, state: State) bool {
         return self.states.get(noun).?.contains(state);
@@ -219,6 +307,12 @@ pub const Rules = struct {
 
     pub fn set(self: *Rules, noun: Noun, state: State) void {
         self.states.getPtr(noun).?.insert(state);
+        self.activeStates.insert(state);
+    }
+
+    // Lets you know if any nouns are that state so you can avoid expensive handling for states that aren't even in the level. 
+    pub fn exists(self: Rules, state: State) bool {
+        return self.activeStates.contains(state);
     }
 
     pub fn playerCanPush(self: Rules, e: Entity) bool {
@@ -240,12 +334,25 @@ pub const Rules = struct {
         inline for (comptime std.enums.values(Noun)) |noun| {
             self.states.put(noun, std.EnumSet(State).initEmpty());
         }
+        self.activeStates = std.EnumSet(State).initEmpty();
+        self.activeStates.insert(.Push);  // Text is always push. 
     }
 
     pub fn init() Rules {
-        var self: Rules = .{ .states = .{} };
+        var self: Rules = .{};
         self.clear();
         return self;
+    }
+
+    pub fn debugPrint(self: Rules) void {
+        std.debug.print("--- RULES ---\n", .{});
+        inline for (comptime std.enums.values(Noun)) |noun| {
+            inline for (comptime std.enums.values(State)) |state| {
+                if (self.is(noun, state)) {
+                    std.debug.print("{} IS {}\n", .{ noun, state });
+                }
+            }
+        }
     }
 };
 
@@ -270,7 +377,7 @@ pub const Block = union(BlockType) {
     And,
 
     pub fn isText(self: Block) bool {
-        return self == @field(Block, "Object");
+        return self != @field(Block, "Object");
     }
 
 
@@ -297,6 +404,7 @@ pub const Noun = enum {
     Rock,
     Wall,
     Flag,
+    Skull,
 };
 
 pub const State = enum {
@@ -305,6 +413,7 @@ pub const State = enum {
     Stop,
     Move,
     Win,
+    Defeat,
 };
 
 pub const Dir = struct {
@@ -312,4 +421,10 @@ pub const Dir = struct {
     pub const DOWN: Pos = .{ 0, 1 };
     pub const LEFT: Pos = .{ -1, 0 };
     pub const RIGHT: Pos = .{ 1, 0 };
+};
+
+pub const GameState = enum {
+    None,
+    Win,
+    Lose
 };

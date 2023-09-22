@@ -4,6 +4,7 @@ const str = std.ArrayList(u8);
 const VERSION: u32 = 1;
 
 // TODO: this format doesnt work because multiple dudes are allowed in one square. 
+// TODO: split pallet so tests dont have to repeat it many times 
 pub fn saveLevel(self: W.Level, alloc: std.mem.Allocator) ![] const u8 {
     var header = str.init(alloc);
     const len = (self.size[0] + 1) * self.size[1];
