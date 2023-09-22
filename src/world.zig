@@ -2,6 +2,9 @@ const std = @import("std");
 const assert = std.debug.assert;
 pub const Pos = @Vector(2, i32);
 
+pub var frameArena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+pub var TEMP = frameArena.allocator();
+
 // TODO: for undo, instead of doing work to reverse things like noun replacements, could just replay all inputs minus one. is anything random? 
 pub const Level = struct {
     entities: std.ArrayList(Entity),
@@ -36,6 +39,7 @@ pub const Level = struct {
         if (self.rulesDirty) {
             self.updateRules();
             self.rulesDirty = false;
+            self.debugPrint();
         }
         // TODO: X is MOVE
         // TODO: this gets called when you move or wait
@@ -60,19 +64,23 @@ pub const Level = struct {
             return false;
         }
 
-        if (self.getEntity(e.pos + dir)) |other| {
-            if (self.rules.isStop(other.*)) {
-                return false;
+        const blockers = self.getEntity(e.pos + dir);
+        if (blockers.len > 0) {
+            for (blockers) |other| {
+                // You can push things that are stop. But otherwise, bail out. 
+                if (self.rules.isStop(other.*) and !self.rules.playerCanPush(other.*)) {
+                    return false;
+                }
             }
-            if (self.rules.playerCanPush(other.*)) {
-                // We need to push the thing out of the way. 
-                if (!self.resolveMove(other, dir)) {
+
+            for (blockers) |other| {
+                // If we have to push it, make sure it has somewhere to go. 
+                // TODO: this is wrong! What happens if the first thing can move but second gets blocked? 
+                if (self.rules.playerCanPush(other.*) and !self.resolveMove(other, dir)) {
                     // Something down the line was blocked, so nobody can move. 
                     return false;
                 }
-            } else {
-                // Not stop and not push, so just pass through. 
-            }   
+            }
         }
 
         // Nothing down the line stopped us, so its safe to update our position. 
@@ -98,11 +106,14 @@ pub const Level = struct {
         }
     }
 
+    // TODO: assert only one text per position. 
     pub fn updateFromIs(self: *Level, isBlockPos: Pos, dir: Pos) void {
-        if (self.getEntity(isBlockPos + dir)) |before| {
+        const beforeS = self.getEntity(isBlockPos + dir);
+        for (beforeS) |before| {
             switch (before.block) {
                 .Noun => |beforeNoun| {
-                    if (self.getEntity(isBlockPos - dir)) |after| {
+                    const afterS = self.getEntity(isBlockPos - dir);
+                    for (afterS) |after| {
                         switch (after.block) {
                             .Noun => |afterNoun| {
                                 self.swapNouns(beforeNoun, afterNoun);
@@ -139,23 +150,31 @@ pub const Level = struct {
 
     pub fn clone(self: Level, alloc: std.mem.Allocator) !Level {
         var w = Level.init(alloc, self.size);
-        w.entities = try self.entities.clone();
-        w.actionHistory = try w.actionHistory.clone();
-        w.updateRules();
+        try w.copyFrom(self);
         return w;
+    }
 
+    pub fn copyFrom(self: *Level, other: Level) !void {
+        self.entities.clearRetainingCapacity();
+        self.actionHistory.clearRetainingCapacity();
+        try self.entities.appendSlice(other.entities.items);
+        try self.actionHistory.appendSlice(other.actionHistory.items);
+        self.rules = other.rules;
+        self.rulesDirty = other.rulesDirty;
+        self.size = other.size;
     }
 
     // TODO: sad slow noises. maybe have a bit field showing which squares have a dude in them. empty is the common case. 
     // TODO: a square can have multiple dudes (NOUN is float). 
     // Unsafe. Must update rulesDirty if mutate through this. Also don't store the pointer.
-    pub fn getEntity(self: *Level, pos: Pos) ?*Entity {
+    pub fn getEntity(self: *Level, pos: Pos) []*Entity {
+        var found = std.ArrayList(*Entity).init(TEMP);
         for (self.entities.items) |*e| {
             if (@reduce(.And, e.pos == pos)) {
-                return e;
+                found.append(e) catch unreachable;
             }
         }
-        return null;
+        return found.items;
     }
     
     pub fn onEdge(self: Level, pos: Pos) bool {
@@ -177,7 +196,17 @@ pub const Level = struct {
         var buf: [4096] u8 = undefined;
         var temp = std.heap.FixedBufferAllocator.init(&buf);
         const info = @import("save.zig").saveLevel(self, temp.allocator());
+        std.debug.print("--- LEVEL ---\n", .{});
         std.debug.print("{!s}\n", .{info});
+        std.debug.print("--- RULES ---\n", .{});
+        inline for (comptime std.enums.values(Noun)) |noun| {
+            inline for (comptime std.enums.values(State)) |state| {
+                if (self.rules.is(noun, state)) {
+                    std.debug.print("{} IS {}\n", .{ noun, state });
+                }
+            }
+        }
+        std.debug.print("--- END ---\n", .{});
     }
 };
 

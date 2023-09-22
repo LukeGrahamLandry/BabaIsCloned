@@ -126,6 +126,7 @@ export fn frame() void {
 
         sdtx.font(0);
         sdtx.color3b(255, 128, 0);
+        // TODO: clearly my math is wrong. want to make text bigger so scales with quadSizePix
         const invTextScale = 1.0;  // 1.0 means 8x8 pixel chars. 0.5 means 16x16 pixel chars. // TODO: set based on fiting 3 letters in a block 
         const pixToCharGrid = 1.0 / 8.0 / invTextScale;
         const logicToCharGrid = quadSizePix * pixToCharGrid;
@@ -157,6 +158,8 @@ export fn frame() void {
     sdtx.draw();
     sg.endPass();
     sg.commit();
+
+    _ = W.frameArena.reset(.retain_capacity);
 }
 
 
@@ -206,12 +209,6 @@ pub fn main() !void {
         .window_title = "BabaIsCloned",
         .logger = .{ .func = slog.func },
     });
-}
-
-
-
-test {
-    _ = @import("tests.zig");
 }
 
 fn defaultLevel() !W.Level {
