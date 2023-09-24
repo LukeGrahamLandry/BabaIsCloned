@@ -12,7 +12,7 @@ const logErr = std.log.scoped(.tilemap).debug;
 // The slices in the list must use the same allocator as the list or deinit() is unsafe. 
 layers: std.ArrayList(Layer),
 
-// Caller still owns <bytes>, and caller owns the returned value. 
+/// Caller still owns `bytes`, and also the returned value. 
 pub fn parse(bytes: []u8, alloc: std.mem.Allocator) !@This() {
     var data: Reader = .{ .data=bytes };
 
@@ -87,13 +87,6 @@ fn loadLayer(data: *Reader, alloc: std.mem.Allocator) !Layer {
         .main = mainLayer,
         .data = dataLayer,
     };
-}
-
-fn require(b: bool, comptime msg: []const u8, args: anytype) !void {
-    if (!b) {
-        logErr(msg, args);
-        return Err;
-    }
 }
 
 // Reads [compressed len u32][zlib compressed data], decompresses it, checks that it got the right number of entries, and casts it to E. 
@@ -190,3 +183,10 @@ const Reader = struct {
         return std.mem.readIntSliceLittle(T, try self.get_slice(@sizeOf(T)));
     }
 };
+
+fn require(b: bool, comptime msg: []const u8, args: anytype) !void {
+    if (!b) {
+        logErr(msg, args);
+        return Err;
+    }
+}

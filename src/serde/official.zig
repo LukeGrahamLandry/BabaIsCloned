@@ -14,36 +14,45 @@
 const std = @import("std");
 const W = @import("../world.zig");
 const TileMap = @import("TileMap.zig");
+const ValuesLua = @import("ValuesLua.zig");
 
 const ParseErr = error.LevelParseFailed;
 
 // TODO: something that loops over the data files and loads all levels. 
 
 pub fn loadLevel(alloc: std.mem.Allocator) !W.Level {
-    const start = std.time.milliTimestamp();
-    const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/baba/{}level.l";
-    for (0..1) |i| {  // 340
-        std.debug.print("START {}\n", .{i});
-        var buf: [512] u8 = undefined;
-        const path = try std.fmt.bufPrint(&buf, template, .{ i });
-        const file = std.fs.openFileAbsolute(path, .{}) catch continue;
+    {
+        const valueslua = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/values.lua";
+        const file = try std.fs.openFileAbsolute(valueslua, .{});
         defer file.close();
         const data = try file.reader().readAllAlloc(W.TEMP, std.math.maxInt(u16));
-
-        const tiles = TileMap.parse(data, std.heap.c_allocator) catch {
-            std.debug.print("FAIL {}\n", .{i});
-            continue;
-        };
-        defer tiles.deinit();
-        std.mem.doNotOptimizeAway(tiles);
+        const values = try ValuesLua.parse(data);
+        _ = values;
     }
+    
+    
+    
+    // const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/baba/{}level.l";
+    // for (0..1) |i| {  // 340
+    //     std.debug.print("START {}\n", .{i});
+    //     var buf: [512] u8 = undefined;
+    //     const path = try std.fmt.bufPrint(&buf, template, .{ i });
+    //     const file = std.fs.openFileAbsolute(path, .{}) catch continue;
+    //     defer file.close();
+    //     const data = try file.reader().readAllAlloc(W.TEMP, std.math.maxInt(u16));
+        
+    //     const tiles = TileMap.parse(data, W.TEM) catch {
+    //         std.debug.print("FAIL {}\n", .{i});
+    //         continue;
+    //     };
+    //     std.mem.doNotOptimizeAway(tiles);
+    // }
     // const path = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/levels/15level.l";
     // const file = try std.fs.openFileAbsolute(path, .{});
     // defer file.close();
     // const data = try file.reader().readAllAlloc(W.TEMP, std.math.maxInt(u16));
-    // _ = try TileMap.parse(data, std.heap.c_allocator);
+    // _ = try TileMap.parse(data, W.TEM);
     
-    std.debug.print("\nParsed levels in {}ms.\n", .{ std.time.milliTimestamp() - start });
 
     var self = W.Level.init(alloc, .{10, 10});
     self.updateRules();
