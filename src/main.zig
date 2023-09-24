@@ -22,7 +22,14 @@ const state = struct {
 
 const alloc = std.heap.c_allocator;
 
+// TODO: wrap with zig calling convention func so i can use try. 
 export fn init() void {
+    if (@import("official.zig").loadLevel(std.heap.c_allocator)) |levelt| {
+        levelt.debugPrint();
+    } else |err| {
+        std.debug.print("parse failed! {}\n", .{err});
+    }
+   
     sg.setup(.{
         .context = sgapp.context(),
         .logger = .{ .func = slog.func },
@@ -53,31 +60,34 @@ export fn init() void {
     state.initialLevel = state.level.clone(alloc) catch @panic("OOM");
 }
 
-// TODO: wrap with zig calling convention func so i can use try. 
-export fn event_handler(event: [*c]const sapp.Event) void {
-    switch (event.*.type) {
+export fn evnt(event: [*c]const sapp.Event) void {
+    handle_event(event.*) catch @panic("OOM");
+}
+
+fn handle_event(event: sapp.Event) !void {
+    switch (event.type) {
         .KEY_DOWN => {
-            switch (event.*.key_code) {
+            switch (event.key_code) {
                 .ESCAPE => sapp.requestQuit(),
-                .W => state.level.handleInput(.Up) catch @panic("OOM"),
-                .A => state.level.handleInput(.Left) catch @panic("OOM"),
-                .S => state.level.handleInput(.Down) catch @panic("OOM"),
-                .D => state.level.handleInput(.Right) catch @panic("OOM"),
-                .SPACE => state.level.handleInput(.Wait) catch @panic("OOM"),
+                .W => try state.level.handleInput(.Up),
+                .A => try state.level.handleInput(.Left),
+                .S => try state.level.handleInput(.Down),
+                .D => try state.level.handleInput(.Right),
+                .SPACE => try state.level.handleInput(.Wait),
                 .Z => {
                     // TODO: hack.
                     var hist = state.level.actionHistory.items;
                     if (hist.len > 0) {
-                        var newLevel = state.initialLevel.clone(alloc) catch @panic("OOM");
+                        var newLevel = try state.initialLevel.clone(alloc);
                         for (hist[0..hist.len-1]) |in| {
-                            newLevel.handleInput(in) catch @panic("OOM");
+                            try newLevel.handleInput(in);
                         }
                         state.level.deinit();  // TODO: extra cringe that every undo reallocates. 
                         state.level = newLevel;
                     }
                 },
                 .R => {
-                    state.level.copyFrom(state.initialLevel) catch @panic("OOM");
+                    try state.level.copyFrom(state.initialLevel);
                 },
                 else => {}
             }
@@ -254,7 +264,7 @@ pub fn main() !void {
         .init_cb = init,
         .frame_cb = frame,
         .cleanup_cb = cleanup,
-        .event_cb = event_handler,
+        .event_cb = evnt,
         .width = 512,
         .height = 512,
         .sample_count = 4,

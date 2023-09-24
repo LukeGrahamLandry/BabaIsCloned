@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 pub const Pos = @Vector(2, i32);
 
+// This gets reset every frame, so you don't have to free stuff manually. None of this is thread safe!
 pub var frameArena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
 pub var TEMP = frameArena.allocator();
 
@@ -287,9 +288,7 @@ pub const Level = struct {
     }
 
     pub fn debugPrint(self: Level) void {
-        var buf: [4096] u8 = undefined;
-        var temp = std.heap.FixedBufferAllocator.init(&buf);
-        const info = @import("save.zig").saveLevel(self, temp.allocator());
+        const info = @import("save.zig").saveLevel(self, TEMP);
         std.debug.print("--- LEVEL ---\n", .{});
         std.debug.print("{!s}\n", .{info});
         self.rules.debugPrint();

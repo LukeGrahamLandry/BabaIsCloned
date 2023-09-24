@@ -5,7 +5,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-
     const sokol_build = sokol.buildSokol(b, target, optimize, .{}, "vendor/sokol-zig/");
 
     const exe = b.addExecutable(.{
@@ -15,6 +14,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // exe.linkLibC();
+    exe.addCSourceFiles(&[_][]const u8 { "vendor/miniz/miniz.c" }, &[_][]const u8 { "-DMINIZ_NO_TIME" });
 
     exe.addAnonymousModule("sokol", .{ .source_file = .{ .path = "vendor/sokol-zig/src/sokol/sokol.zig" } });
     exe.linkLibrary(sokol_build);
