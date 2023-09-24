@@ -1,5 +1,5 @@
 const std = @import("std");
-const W = @import("world.zig");
+const W = @import("../world.zig");
 const str = std.ArrayList(u8);
 const VERSION: u32 = 1;
 

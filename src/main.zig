@@ -8,7 +8,7 @@ const sgl = sokol.gl;
 const sgapp = sokol.app_gfx_glue;
 const math = @import("std").math;
 const sdtx = sokol.debugtext;
-const save = @import("save.zig");
+const save = @import("serde/save.zig");
 
 const SAVE_FOLDER = "zig-out";
 const SAVE_FILE = SAVE_FOLDER ++ "/save.baba";
@@ -24,7 +24,7 @@ const alloc = std.heap.c_allocator;
 
 // TODO: wrap with zig calling convention func so i can use try. 
 export fn init() void {
-    if (@import("official.zig").loadLevel(std.heap.c_allocator)) |levelt| {
+    if (@import("serde/official.zig").loadLevel(std.heap.c_allocator)) |levelt| {
         levelt.debugPrint();
     } else |err| {
         std.debug.print("parse failed! {}\n", .{err});

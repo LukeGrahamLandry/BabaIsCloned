@@ -288,7 +288,7 @@ pub const Level = struct {
     }
 
     pub fn debugPrint(self: Level) void {
-        const info = @import("save.zig").saveLevel(self, TEMP);
+        const info = @import("serde/save.zig").saveLevel(self, TEMP);
         std.debug.print("--- LEVEL ---\n", .{});
         std.debug.print("{!s}\n", .{info});
         self.rules.debugPrint();
