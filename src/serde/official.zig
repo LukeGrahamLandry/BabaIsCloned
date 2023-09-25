@@ -20,26 +20,47 @@ const ParseErr = error.LevelParseFailed;
 
 // TODO: something that loops over the data files and loads all levels. 
 
-pub fn loadLevel(alloc: std.mem.Allocator) !W.Level {
-    {
-        const valueslua = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/values.lua";
-        const file = try std.fs.openFileAbsolute(valueslua, .{});
-        defer file.close();
-        const data = try file.reader().readAllAlloc(W.TEMP, std.math.maxInt(u16));
-        const values = try ValuesLua.parse(data);
-        _ = values;
+pub fn readAlloc(absPath: []const u8, alloc: std.mem.Allocator) ![]u8 {
+    const file = try std.fs.openFileAbsolute(absPath, .{});
+    defer file.close();
+    return try file.reader().readAllAlloc(alloc, std.math.maxInt(u32));
+}
+
+pub fn loadLevel(alloc: std.mem.Allocator, tileMapPath: []const u8) !W.Level {
+    const valuesPath = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/values.lua";
+    const valuesData = try readAlloc(valuesPath, W.TEMP);
+    const tileset = try ValuesLua.parse(valuesData);
+    
+    const data = try readAlloc(tileMapPath, W.TEMP);
+    const tilemap = try TileMap.parse(data, W.TEMP);
+
+    const width = @as(i32, @intCast(tilemap.layers.items[0].width));
+    const height = @as(i32, @intCast(tilemap.layers.items[0].height));
+    var self = W.Level.init(alloc, .{ width, height });
+
+    for (0..@intCast(height)) |y| {
+        for (0..@intCast(width)) |x| {
+            const index = (y * @as(usize, @intCast(width))) + x;
+            const pos = tilemap.layers.items[0].main[index].pos;
+            const name = tileset.getName(pos.x, pos.y);
+            if (name) |n|{
+                if (strToBlock(n)) |block| {
+                    try self.addEntity(.{ @as(i32, @intCast(x)), @as(i32, @intCast(y)) }, block);
+                } else {
+                    std.debug.print("Failed to parse block type '{s}'.\n", .{ n });
+                }
+            }
+
+        }
+        
     }
-    
-    
     
     // const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/baba/{}level.l";
     // for (0..1) |i| {  // 340
     //     std.debug.print("START {}\n", .{i});
     //     var buf: [512] u8 = undefined;
     //     const path = try std.fmt.bufPrint(&buf, template, .{ i });
-    //     const file = std.fs.openFileAbsolute(path, .{}) catch continue;
-    //     defer file.close();
-    //     const data = try file.reader().readAllAlloc(W.TEMP, std.math.maxInt(u16));
+    //     const data = try readAlloc(path, W.TEMP);
         
     //     const tiles = TileMap.parse(data, W.TEM) catch {
     //         std.debug.print("FAIL {}\n", .{i});
@@ -47,14 +68,10 @@ pub fn loadLevel(alloc: std.mem.Allocator) !W.Level {
     //     };
     //     std.mem.doNotOptimizeAway(tiles);
     // }
-    // const path = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/levels/15level.l";
-    // const file = try std.fs.openFileAbsolute(path, .{});
-    // defer file.close();
-    // const data = try file.reader().readAllAlloc(W.TEMP, std.math.maxInt(u16));
-    // _ = try TileMap.parse(data, W.TEM);
+
+
     
 
-    var self = W.Level.init(alloc, .{10, 10});
     self.updateRules();
     return self;
 }

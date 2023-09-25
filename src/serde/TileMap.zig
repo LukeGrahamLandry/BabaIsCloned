@@ -1,6 +1,7 @@
 /// This is a direct port of a subset of https://github.com/clickteam-plugin/TileMap 
 /// Just enough to load levels from the real game. 
 /// The original's license is "Public domain. Do whatever you want with it." 
+/// The original uses an old version of https://github.com/richgel999/miniz but zig std has a zlib implementation that conforms to the same RFC. 
 
 const MAGIC = "ACHTUNG!";
 const VER_15: u16 = (1 << 8) | 5;
@@ -184,6 +185,7 @@ const Reader = struct {
     }
 };
 
+// TODO: consolodate these common parsing helpers. 
 fn require(b: bool, comptime msg: []const u8, args: anytype) !void {
     if (!b) {
         logErr(msg, args);

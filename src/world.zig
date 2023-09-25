@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 pub const Pos = @Vector(2, i32);
 
+// TODO: could I have a debug version that doesn't reuse memory and zeros old stuff to detect use after the frame ends? 
 // This gets reset every frame, so you don't have to free stuff manually. None of this is thread safe!
 pub var frameArena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
 pub var TEMP = frameArena.allocator();
@@ -356,6 +357,7 @@ pub const Rules = struct {
 };
 
 pub const Input = enum {
+    // TODO: split directions into something I can reuse? 
     Left,
     Right,
     Up,
@@ -366,12 +368,14 @@ pub const Input = enum {
 pub const Entity = struct {
     block: Block,
     pos: Pos,
+    // TODO: direction. 
 };
 
 pub const Block = union(BlockType) {
     Noun: Noun,
     State: State,
     Object: Noun,
+    // TODO: Connector type instead of inlining them all here. 
     Is,
     And,
 
@@ -415,6 +419,7 @@ pub const State = enum {
     Defeat,
 };
 
+// TODO: make this an enum so I can reuse for entity direction. 
 pub const Dir = struct {
     pub const UP: Pos = .{ 0, -1 };
     pub const DOWN: Pos = .{ 0, 1 };

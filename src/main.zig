@@ -9,6 +9,7 @@ const sgapp = sokol.app_gfx_glue;
 const math = @import("std").math;
 const sdtx = sokol.debugtext;
 const save = @import("serde/save.zig");
+const official = @import("serde/official.zig");
 
 const SAVE_FOLDER = "zig-out";
 const SAVE_FILE = SAVE_FOLDER ++ "/save.baba";
@@ -18,17 +19,18 @@ const state = struct {
     var pip3d: sgl.Pipeline = .{};
     var level: W.Level = undefined;
     var initialLevel: W.Level = undefined;
+    var levelIndex: usize = 0;
 };
 
 const alloc = std.heap.c_allocator;
 
 // TODO: wrap with zig calling convention func so i can use try. 
 export fn init() void {
-    if (@import("serde/official.zig").loadLevel(std.heap.c_allocator)) |levelt| {
-        levelt.debugPrint();
-    } else |err| {
+    reloadLevel(0, false) catch |err| {
         std.debug.print("parse failed! {}\n", .{err});
-    }
+        state.level = loadSavedLevel(SAVE_FILE) catch defaultLevel() catch @panic("OOM");
+        state.initialLevel = state.level.clone(alloc) catch @panic("OOM");
+    };
    
     sg.setup(.{
         .context = sgapp.context(),
@@ -55,9 +57,6 @@ export fn init() void {
     var sdtx_desc: sdtx.Desc = .{ .logger = .{ .func = slog.func } };
     sdtx_desc.fonts[0] = sdtx.fontKc854();
     sdtx.setup(sdtx_desc);
-
-    state.level = loadSavedLevel(SAVE_FILE) catch defaultLevel() catch @panic("OOM");
-    state.initialLevel = state.level.clone(alloc) catch @panic("OOM");
 }
 
 export fn evnt(event: [*c]const sapp.Event) void {
@@ -89,6 +88,21 @@ fn handle_event(event: sapp.Event) !void {
                 .R => {
                     try state.level.copyFrom(state.initialLevel);
                 },
+                .LEFT => {
+                    if (state.levelIndex > 0) {
+                        state.levelIndex -= 1;
+                        reloadLevel(state.levelIndex, true) catch {
+                            std.debug.print("Failed to load level {}\n", .{state.levelIndex});
+                        };
+                    }
+                },
+                .RIGHT => {
+                    state.levelIndex += 1;
+                    // TODO: split into two functions. one that does stuff with the state and wraps a pure one in official.zig 
+                    reloadLevel(state.levelIndex, true) catch {
+                        std.debug.print("Failed to load level {}\n", .{state.levelIndex});
+                    };
+                },
                 else => {}
             }
         },
@@ -99,6 +113,22 @@ fn handle_event(event: sapp.Event) !void {
         },
         else => {}
     }
+}
+
+// TODO: move this to official.zig and just return the level obj. 
+fn reloadLevel(index: usize, reset: bool) !void {
+    const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/baba/{}level.l";
+    const path = try std.fmt.allocPrint(W.TEMP, template, .{index});
+    var newLevel = try official.loadLevel(std.heap.c_allocator, path); 
+    newLevel.debugPrint();
+    if (reset) {  // TODO: aaaaaaa, i dont care rn
+        state.level.deinit();
+        state.initialLevel.deinit();
+    }
+    
+    // TODO: dont reallocate every load. 
+    state.level = newLevel;
+    state.initialLevel = try newLevel.clone(std.heap.c_allocator);
 }
 
 

@@ -31,12 +31,6 @@ test "world repr sanity" {
     w.updateRules();
     try expectOne(w, .{ 0, 0 }, .{ .Object = .Wall });
     try expectOne(w, .{ 1, 10 }, .{ .Object = .Wall });
-
-    // const save = @import("save.zig");
-    // const data = try save.saveLevel(w, std.heap.c_allocator);
-    // std.debug.print("{!s}", .{data});
-    // const w2 = try save.loadLevel(data, std.heap.c_allocator);
-    // std.debug.print("{!s}", .{ save.saveLevel(w2, std.heap.c_allocator) });
 }
 
 test "move and push" {
@@ -104,4 +98,9 @@ fn expectOne(w: W.Level, pos: W.Pos, block: ?W.Block) !void {
     } else {
         try expectEq(found.len, 0);
     }
+}
+
+
+test "_" {
+    _ = @import("serde/ValuesLua.zig");
 }
