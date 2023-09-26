@@ -1,5 +1,4 @@
 /// A lexer for a tiny subset of Lua (just simple table initilization). 
-/// Enough to read values.lua to extract the base tileset info. 
 
 const std = @import("std");
 const W = @import("../world.zig");

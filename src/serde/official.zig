@@ -13,9 +13,8 @@
 
 const std = @import("std");
 const W = @import("../world.zig");
-const TileMap = @import("TileMap.zig");
-const TileSet = @import("TileSet.zig");
-
+pub const TileMap = @import("TileMap.zig");
+pub const TileSet = @import("TileSet.zig");
 
 // TODO: something that loops over the data files and loads all levels. 
 
@@ -27,9 +26,12 @@ pub fn readAlloc(absPath: []const u8, alloc: std.mem.Allocator) ![]u8 {
 
 pub var tileSet: ?TileSet = null;
 
+// TODO: seperate doing the work from accessing the file system. 
 pub fn loadLevel(alloc: std.mem.Allocator, tileMapPath: []const u8) !W.Level {
     const valuesPath = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/values.lua";
-    const valuesData = try readAlloc(valuesPath, W.TEMP);
+    // TODO: i want to use temp alloc but the TileSet keeps the little strings for sprite paths. 
+    //       so now it keeps the whole code alive. 
+    const valuesData = try readAlloc(valuesPath, alloc);  
     if (tileSet == null) {
         tileSet = try TileSet.parse(valuesData);
     }
@@ -123,7 +125,7 @@ fn find(comptime E: type, str: []const u8) ?E {
 }
 
 const Err = error.LevelParseFailed;
-const logErr = std.log.scoped(.tilemap).debug;
+pub const logErr = std.log.scoped(.baba).debug;
 pub fn require(b: bool, comptime msg: []const u8, args: anytype) !void {
     if (!b) {
         logErr(msg, args);

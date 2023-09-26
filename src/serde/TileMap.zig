@@ -56,7 +56,7 @@ pub fn parse(bytes: []u8, alloc: std.mem.Allocator) !@This() {
         try require(expectedRemaining == data.data.len, "Incorrect block size.", .{});
     }
 
-    self.debugPrint();
+    // self.debugPrint();
     return self;
 }
 

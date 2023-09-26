@@ -1,7 +1,9 @@
+/// This parses values.lua to get the base tile set. 
+
 const std = @import("std");
 const W = @import("../world.zig");
-const logErr = std.log.scoped(.tilemap).debug;
-const Err = error.ParseErr;
+const require = @import("official.zig").require;
+const logErr = @import("official.zig").logErr;
 
 const Lexer = @import("LuaLexer.zig");
 const TileSet = @This();
@@ -10,12 +12,10 @@ pub fn parse(bytes: []const u8) !TileSet {
     var tiles: TileSet = .{};
 
     const HEADER = "tileslist =";
-    const startIndex = std.mem.indexOf(u8, bytes, HEADER) orelse {
-        logErr("var tileslist not found.", .{});
-        return Err;
-    };
+    const startIndex = std.mem.indexOf(u8, bytes, HEADER);
+    try require(startIndex != null, "var tileslist not found.", .{});
 
-    const beginAt = startIndex + HEADER.len;
+    const beginAt = startIndex.? + HEADER.len;
     var lexer: Lexer = .{ .data=bytes[beginAt..] };
     
     _ = try lexer.expect(.leftBrace, "Expected data start.");
@@ -82,7 +82,6 @@ pub fn parse(bytes: []const u8) !TileSet {
         _ = try lexer.expect(.comma, "Expected trailing ','");
     }
 
-    logErr("tileset size = {} bytes\n", .{ @sizeOf(TileSet) });
     return tiles;
 }
 
@@ -92,9 +91,11 @@ const strToBlock = @import("official.zig").strToBlock;
 const SIZE = 17;
 const Data = struct {
     block: W.Block,
-    // TODO: replace ^ with block: W.Block. then this would have no dynamic memory which is nice
     id: u16,
-    layer: u8
+    layer: u8,
+
+    // TODO: I dislike that this thing owns memory. 
+    sprite: []const u8
 };
 
 const BitSet = std.bit_set.IntegerBitSet(SIZE * SIZE);
@@ -109,6 +110,7 @@ posToData: [SIZE * SIZE] Data = undefined,
 idToPos: [SIZE * SIZE] u16 = undefined,
 
 // TODO: what happens when they want two of the same block type but on different layers? do they?
+//       add assertions to catch it once i impl mutation 
 blockToLayer: BlockMap(u8) = .{},
 
 // TODO: remove once I can parse all. this sucks. just cause I don't want to change the test rn. 
@@ -125,6 +127,7 @@ fn add(self: *TileSet, object: Object) !void {
     self.attempts += 1;
 
     // TODO: don't allow loading the same type of block twice? 
+    // TODO: default is allowed but required to be mutated by .ld file before use. 
     const block = strToBlock(object.name.?) orelse {
         logErr("Failed to parse block type '{s}'", .{ object.name.? });
         // TODO: this should be a hard error once I can parse everything. 
@@ -133,7 +136,8 @@ fn add(self: *TileSet, object: Object) !void {
 
     self.existingPos.set(index);
     self.existingId.set(object.id);
-    self.posToData[index] = .{ .id=object.id, .block=block, .layer=object.layer };
+    // TODO: sprite exists as a seperate field. do they every actually change it?
+    self.posToData[index] = .{ .id=object.id, .block=block, .layer=object.layer, .sprite=object.name.? };
     self.idToPos[object.id] = index;
     if (self.blockToLayer.contains(block)) {
         logErr("Repeated block type {}", .{ block });
@@ -155,7 +159,7 @@ pub fn getBlock(self: TileSet, x: usize, y: usize) ?W.Block {
 }
 
 
-fn BlockMap(comptime V: type) type {
+pub fn BlockMap(comptime V: type) type {
     // TODO: clever comptime introspection instead of hard-coding it. 
     return struct {
         noun: std.EnumMap(W.Noun, V) = .{},
@@ -197,15 +201,8 @@ const Object = struct {
     id: u16,
     x: u8 = 255,
     y: u8 = 255,
-    layer: u8 = 20  // TODO: use this when rendering 
+    layer: u8 = 20
 };
-
-fn require(b: bool, comptime msg: []const u8, args: anytype) !void {
-    if (!b) {
-        logErr(msg, args);
-        return Err;
-    }
-}
 
 // TODO: ignore this test if real game not installed. 
 test "don't choke on values.lua" {

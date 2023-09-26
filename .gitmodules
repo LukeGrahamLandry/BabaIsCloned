@@ -1,3 +1,6 @@
 [submodule "vendor/sokol-zig"]
 	path = vendor/sokol-zig
 	url = https://github.com/floooh/sokol-zig.git
+[submodule "vendor/zigimg"]
+	path = vendor/zigimg
+	url = https://github.com/zigimg/zigimg.git

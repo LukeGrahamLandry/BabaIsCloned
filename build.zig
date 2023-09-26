@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    exe.addAnonymousModule("zigimg", .{.source_file = .{ .path = "vendor/zigimg/zigimg.zig" }});
     exe.addAnonymousModule("sokol", .{ .source_file = .{ .path = "vendor/sokol-zig/src/sokol/sokol.zig" } });
     exe.linkLibrary(sokol_build);
 
