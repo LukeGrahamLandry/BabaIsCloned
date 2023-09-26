@@ -154,23 +154,26 @@ export fn frame() void {
     const dt: f32 = @floatCast(sapp.frameDuration() * 60);
     _ = dt;
 
-    // The scaling will be adjusted to always fit >= this many objects. This can change by level. 
-    const quadCount: f32 = @floatFromInt(@max(state.level.size[0], state.level.size[1])); 
 
     const dw = sapp.widthf();
     const dh = sapp.heightf();
     sgl.viewportf(0.0, 0.0, dw, dh, true);
-    const screenSize = @min(dw, dh);
-    const quadSizePix = screenSize / quadCount;
+
+    // The scaling will be adjusted to always fit >= this many objects. This can change by level. 
+    // Levels aren't squares, so calculate for both dimensions and use most restrictive. 
+    const quadCountX: f32 = @floatFromInt(state.level.size[0]); 
+    const quadCountY: f32 = @floatFromInt(state.level.size[1]); 
+    const quadSizePixX = dw / quadCountX;
+    const quadSizePixY = dh / quadCountY;
+    const quadSizePix = @min(quadSizePixX, quadSizePixY);
     const quadWidthRat = quadSizePix / dw;
     const quadHeightRat = quadSizePix / dh;
-
 
     {
         const scale: f32 = 1.0;
         sgl.defaults();
         sgl.scale(scale, scale, 1.0);
-        sgl.beginQuads();
+        sgl.beginQuads(); 
 
         sdtx.font(0);
         sdtx.color3b(255, 128, 0);
@@ -183,34 +186,46 @@ export fn frame() void {
         // Shows which part of the screen you can actually be in. 
         drawBackground(.{ .r=20, .g=20, .b=20 }, .{quadWidthRat, quadHeightRat}, state.level.size);
 
-        for (state.level.entities.items) |e| {
-            const colour: Colour = if (e.block.isText()) .{ .r=255, .g=255, .b=255 } else .{ .r=255, .g=255, .b=128 };
-            drawOneQuad(e.pos, colour, .{quadWidthRat, quadHeightRat});
 
-            const x = @as(f32, @floatFromInt(e.pos[0]));
-            const y = @as(f32, @floatFromInt(e.pos[1]));
-            sdtx.origin(x * logicToCharGrid, y * logicToCharGrid);
-            sdtx.pos(0, 0);
-            const s = e.block.name();
-            switch (s.len) {
-                0...3 => {
-                    sdtx.print("{s}", .{s});
-                },
-                4 => {
-                    sdtx.print("{s}", .{s[0..2]});
-                    sdtx.pos(0, 1);
-                    sdtx.print("{s}", .{s[2..]});
-                },
-                5...6 => {
-                    sdtx.print("{s}", .{s[0..3]});
-                    sdtx.pos(0, 1);
-                    sdtx.print("{s}", .{s[3..]});
-                },
-                else => {
-                    std.debug.panic("TODO: long word", .{});
+        // TODO: this is fucking insane. at least sort it instead of looping 20 times like a turtle. 
+        //       this doesnt even work because it draws all the yellow then all the text beacuse of the clever draw call coalescing. 
+        for (0..21) |currentLayer| {
+            for (state.level.entities.items) |e| {
+                // TODO: cope with not having loaded the tileSet. 
+                const myLayer = official.tileSet.?.blockToLayer.get(e.block) orelse 20;
+                if (myLayer != currentLayer) {
+                    continue;
+                }
+
+                const colour: Colour = if (e.block.isText()) .{ .r=255, .g=255, .b=255 } else .{ .r=255, .g=255, .b=128 };
+                drawOneQuad(e.pos, colour, .{quadWidthRat, quadHeightRat});
+
+                const x = @as(f32, @floatFromInt(e.pos[0]));
+                const y = @as(f32, @floatFromInt(e.pos[1]));
+                sdtx.origin(x * logicToCharGrid, y * logicToCharGrid);
+                sdtx.pos(0, 0);
+                const s = e.block.name();
+                switch (s.len) {
+                    0...3 => {
+                        sdtx.print("{s}", .{s});
+                    },
+                    4 => {
+                        sdtx.print("{s}", .{s[0..2]});
+                        sdtx.pos(0, 1);
+                        sdtx.print("{s}", .{s[2..]});
+                    },
+                    5...6 => {
+                        sdtx.print("{s}", .{s[0..3]});
+                        sdtx.pos(0, 1);
+                        sdtx.print("{s}", .{s[3..]});
+                    },
+                    else => {
+                        std.debug.panic("TODO: long word", .{});
+                    }
                 }
             }
         }
+        
 
         switch (state.level.state) {
             .Win => alertText("You Win!"),
@@ -243,6 +258,7 @@ const Colour = struct {
     r: u8,
     g: u8,
     b: u8,
+    a: u8 = 255  // TODO: I feel like this doesn't work. 
 };
 
 // Requires context setup before call. 
@@ -260,10 +276,10 @@ fn drawOneQuad(pos: W.Pos, c: Colour, size: @Vector(2, f32)) void {
     const bottom = (-(y + 1) * (size[1] * 2.0)) + 1;
     
     // Center is (0, 0). Screen is 2x2. Top left is (-1, 1). Those are affected by the scale.
-    sgl.v2fC3b(left, bottom, c.r, c.g, c.b);
-    sgl.v2fC3b(right, bottom, c.r, c.g, c.b);
-    sgl.v2fC3b(right, top, c.r, c.g, c.b);
-    sgl.v2fC3b(left, top, c.r, c.g, c.b);
+    sgl.v2fC4b(left, bottom, c.r, c.g, c.b, c.a);
+    sgl.v2fC4b(right, bottom, c.r, c.g, c.b, c.a);
+    sgl.v2fC4b(right, top, c.r, c.g, c.b, c.a);
+    sgl.v2fC4b(left, top, c.r, c.g, c.b, c.a);
 }
 
 // TODO: one func used by ^ that lets you give start and stop pos in logic space. 
@@ -276,10 +292,10 @@ fn drawBackground(c: Colour, size: @Vector(2, f32), worldSize: W.Pos) void {
     const bottom = (-h * (size[1] * 2.0)) + 1;
     
     // Center is (0, 0). Screen is 2x2. Top left is (-1, 1). Those are affected by the scale.
-    sgl.v2fC3b(left, bottom, c.r, c.g, c.b);
-    sgl.v2fC3b(right, bottom, c.r, c.g, c.b);
-    sgl.v2fC3b(right, top, c.r, c.g, c.b);
-    sgl.v2fC3b(left, top, c.r, c.g, c.b);
+    sgl.v2fC4b(left, bottom, c.r, c.g, c.b, c.a);
+    sgl.v2fC4b(right, bottom, c.r, c.g, c.b, c.a);
+    sgl.v2fC4b(right, top, c.r, c.g, c.b, c.a);
+    sgl.v2fC4b(left, top, c.r, c.g, c.b, c.a);
 }
 
 
@@ -307,12 +323,12 @@ pub fn main() !void {
 fn defaultLevel() !W.Level {
     var w = W.Level.init(std.heap.c_allocator, .{ 10, 10 });
     try w.addEntity(.{ 1, 5 }, .{ .Noun = .Baba });
-    try w.addEntity(.{ 2, 5 }, .Is);
+    try w.addEntity(.{ 2, 5 }, .{ .Connect = .Is });
     try w.addEntity(.{ 3, 5 }, .{ .State = .You });
     try w.addEntity(.{ 2, 4 }, .{ .Noun = .Rock });
     try w.addEntity(.{ 2, 6 }, .{ .State = .Push });
     try w.addEntity(.{ 5, 0 }, .{ .Noun = .Wall });
-    try w.addEntity(.{ 6, 0 }, .Is);
+    try w.addEntity(.{ 6, 0 }, .{ .Connect = .Is });
     try w.addEntity(.{ 7, 0 }, .{ .State = .Stop });
     try w.addEntity(.{ 5, 2 }, .{ .Object = .Rock });
     try w.addEntity(.{ 5, 1 }, .{ .Object = .Baba });

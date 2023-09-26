@@ -14,9 +14,8 @@
 const std = @import("std");
 const W = @import("../world.zig");
 const TileMap = @import("TileMap.zig");
-const ValuesLua = @import("ValuesLua.zig");
+const TileSet = @import("TileSet.zig");
 
-const ParseErr = error.LevelParseFailed;
 
 // TODO: something that loops over the data files and loads all levels. 
 
@@ -26,14 +25,20 @@ pub fn readAlloc(absPath: []const u8, alloc: std.mem.Allocator) ![]u8 {
     return try file.reader().readAllAlloc(alloc, std.math.maxInt(u32));
 }
 
+pub var tileSet: ?TileSet = null;
+
 pub fn loadLevel(alloc: std.mem.Allocator, tileMapPath: []const u8) !W.Level {
     const valuesPath = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/values.lua";
     const valuesData = try readAlloc(valuesPath, W.TEMP);
-    const tileset = try ValuesLua.parse(valuesData);
+    if (tileSet == null) {
+        tileSet = try TileSet.parse(valuesData);
+    }
     
     const data = try readAlloc(tileMapPath, W.TEMP);
     const tilemap = try TileMap.parse(data, W.TEMP);
 
+    // TODO: include the other layers (the dudes that are overlaping). 
+    //       I think that's not a gameplay thing, they just force it into their existing tile format. 
     const width = @as(i32, @intCast(tilemap.layers.items[0].width));
     const height = @as(i32, @intCast(tilemap.layers.items[0].height));
     var self = W.Level.init(alloc, .{ width, height });
@@ -42,17 +47,10 @@ pub fn loadLevel(alloc: std.mem.Allocator, tileMapPath: []const u8) !W.Level {
         for (0..@intCast(width)) |x| {
             const index = (y * @as(usize, @intCast(width))) + x;
             const pos = tilemap.layers.items[0].main[index].pos;
-            const name = tileset.getName(pos.x, pos.y);
-            if (name) |n|{
-                if (strToBlock(n)) |block| {
-                    try self.addEntity(.{ @as(i32, @intCast(x)), @as(i32, @intCast(y)) }, block);
-                } else {
-                    std.debug.print("Failed to parse block type '{s}'.\n", .{ n });
-                }
+            if (tileSet.?.getBlock(pos.x, pos.y)) |block|{
+                try self.addEntity(.{ @as(i32, @intCast(x)), @as(i32, @intCast(y)) }, block);
             }
-
         }
-        
     }
     
     // const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/baba/{}level.l";
@@ -76,7 +74,7 @@ pub fn loadLevel(alloc: std.mem.Allocator, tileMapPath: []const u8) !W.Level {
     return self;
 }
 
-fn strToBlock(str: []const u8) ?W.Block {
+pub fn strToBlock(str: []const u8) ?W.Block {
     var parts = std.mem.splitScalar(u8, str, '_');
     const first = parts.next().?;
     if (parts.next()) |second| {
@@ -92,14 +90,9 @@ fn strToBlock(str: []const u8) ?W.Block {
             return .{ .Noun = noun };
         }
 
-        if (std.mem.eql(u8, second, "is")) {
-            return .Is;
+        if (find(W.Connect, second)) |word| {
+            return .{ .Connect = word };
         }
-        
-        if (std.mem.eql(u8, second, "and")) {
-            return .And;
-        }
-
     } else {
         if (find(W.Noun, first)) |noun| {
             return .{ .Object = noun };
@@ -127,4 +120,13 @@ fn find(comptime E: type, str: []const u8) ?E {
     }
 
     return null;
+}
+
+const Err = error.LevelParseFailed;
+const logErr = std.log.scoped(.tilemap).debug;
+pub fn require(b: bool, comptime msg: []const u8, args: anytype) !void {
+    if (!b) {
+        logErr(msg, args);
+        return Err;
+    }
 }

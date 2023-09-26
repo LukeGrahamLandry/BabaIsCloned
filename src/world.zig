@@ -170,9 +170,14 @@ pub const Level = struct {
         self.rules.clear();
         for (self.entities.items) |e| {
             switch (e.block) {
-                .Is => {
-                    self.updateFromIs(e.pos, Dir.UP);
+                .Connect => |word| {
+                    switch (word) {
+                        .Is => {
+                             self.updateFromIs(e.pos, Dir.UP);
                     self.updateFromIs(e.pos, Dir.LEFT);
+                        },
+                        else => {},
+                    }
                 },
                 else => {}
             }
@@ -375,9 +380,7 @@ pub const Block = union(BlockType) {
     Noun: Noun,
     State: State,
     Object: Noun,
-    // TODO: Connector type instead of inlining them all here. 
-    Is,
-    And,
+    Connect: Connect,
 
     pub fn isText(self: Block) bool {
         return self != @field(Block, "Object");
@@ -389,7 +392,7 @@ pub const Block = union(BlockType) {
             .Noun => |noun| @tagName(noun),
             .Object => |noun| @tagName(noun),
             .State => |state| @tagName(state),
-            else => @tagName(self),
+            .Connect => |word| @tagName(word),
         };
     }
 };
@@ -398,25 +401,35 @@ pub const BlockType = enum {
     Noun,
     State,
     Object,
-    Is,
-    And,
+    Connect,
 };
 
+// TODO: maybe its a little silly for these to be a compile time concept. 
 pub const Noun = enum {
     Baba,
     Rock,
     Wall,
     Flag,
     Skull,
+    Water,
+
+    // TODO: I need layered rendering so this doesnt suck
+    // Background things
+    Tile,
+    Grass,
 };
 
 pub const State = enum {
     You,
     Push,
     Stop,
-    Move,
     Win,
     Defeat,
+};
+
+pub const Connect = enum {
+    Is,
+    And,
 };
 
 // TODO: make this an enum so I can reuse for entity direction. 

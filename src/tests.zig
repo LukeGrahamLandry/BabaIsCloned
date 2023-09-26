@@ -26,7 +26,7 @@ test "world repr sanity" {
     try expectOne(w, .{ 0, 0 }, .{ .Object = .Baba });
     try expectOne(w, .{ 1, 10 }, .{ .Object = .Baba });
 
-    try w.addEntity(.{ 2, 20 }, .Is);
+    try w.addEntity(.{ 2, 20 }, .{ .Connect = .Is });
     try w.addEntity(.{ 3, 20 }, .{ .Noun = .Wall });
     w.updateRules();
     try expectOne(w, .{ 0, 0 }, .{ .Object = .Wall });
@@ -37,12 +37,12 @@ test "move and push" {
     var w = W.Level.init(std.heap.c_allocator, .{ 10, 20 });
 
     try w.addEntity(.{ 1, 5 }, .{ .Noun = .Baba });
-    try w.addEntity(.{ 2, 5 }, .Is);
+    try w.addEntity(.{ 2, 5 }, .{ .Connect = .Is });
     try w.addEntity(.{ 3, 5 }, .{ .State = .You });
     try w.addEntity(.{ 2, 4 }, .{ .Noun = .Rock });
     try w.addEntity(.{ 2, 6 }, .{ .State = .Push });
     try w.addEntity(.{ 5, 0 }, .{ .Noun = .Wall });
-    try w.addEntity(.{ 6, 0 }, .Is);
+    try w.addEntity(.{ 6, 0 }, .{ .Connect = .Is });
     try w.addEntity(.{ 7, 0 }, .{ .State = .Stop });
     w.updateRules();
 
@@ -102,5 +102,6 @@ fn expectOne(w: W.Level, pos: W.Pos, block: ?W.Block) !void {
 
 
 test "_" {
-    _ = @import("serde/ValuesLua.zig");
+    _ = @import("serde/LuaLexer.zig");
+    _ = @import("serde/TileSet.zig");
 }

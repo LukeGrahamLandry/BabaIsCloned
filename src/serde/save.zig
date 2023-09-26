@@ -33,8 +33,11 @@ pub fn saveLevel(self: W.Level, alloc: std.mem.Allocator) ![] const u8 {
             .State => |state| b: {
                 break :b getOrAdd(W.State, numbers, &states, state);
             },
-            .Is => '=',
-            .And => '+',
+            // TODO: do stuff with tag name lookup instead. 
+            .Connect => |word| switch (word) {
+                .Is => '=',
+                .And => '+',
+            }
         };
         body.items[@intCast(index)] = c;
     }
@@ -128,9 +131,9 @@ pub fn loadLevel(data: [] const u8, alloc: std.mem.Allocator) !W.Level {
                 } else if (states[c]) |state| {
                     try self.addEntity(pos, .{ .State=state });
                 } else if (c == '=') {
-                    try self.addEntity(pos, .Is);
+                    try self.addEntity(pos, .{ .Connect=.Is});
                 } else if (c == '+') {
-                    try self.addEntity(pos, .And);
+                    try self.addEntity(pos,  .{ .Connect=.And});
                 } else {
                     return ParseErr;
                 }
