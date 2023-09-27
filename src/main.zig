@@ -11,6 +11,7 @@ const sdtx = sokol.debugtext;
 const save = @import("serde/save.zig");
 const official = @import("serde/official.zig");
 const Img = @import("zigimg");
+const Textures = @import("textures.zig");
 
 const SAVE_FOLDER = "zig-out";
 const SAVE_FILE = SAVE_FOLDER ++ "/save.baba";
@@ -22,8 +23,9 @@ const state = struct {
     var initialLevel: W.Level = undefined;
     var levelIndex: usize = 0;
     var sample: sg.Sampler = undefined;
-    var atlas: TextureAtlas = undefined;
-    var blockTextures: official.TileSet.BlockMap(TextureAtlas.Uv) = .{};
+    var atlas: sg.Image = undefined;
+    var blockTextures: Textures.UvMap = .{};
+    var pallet: Textures.ColourSet = .{};
 };
 
 const alloc = std.heap.c_allocator;
@@ -45,13 +47,23 @@ export fn init() void {
         .logger = .{ .func = slog.func },
     });
 
-    state.pip3d = sgl.makePipeline(.{
+
+    var pipeDesc: sg.PipelineDesc = .{
         .depth = .{
             .write_enabled = true,
             .compare = .LESS_EQUAL,
         },
         .cull_mode = .BACK,
-    });
+    };
+    
+    pipeDesc.colors[0].blend = .{
+        .enabled = true,
+        // NOT *_factor_alpha! We want to apply a factor TO rgb, the factor is based on the alpha. 
+        .src_factor_rgb = .SRC_ALPHA,
+        .dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+    };
+
+    state.pip3d = sgl.makePipeline(pipeDesc);
 
     state.pass_action.colors[0] = .{
         .load_action = .CLEAR,
@@ -62,115 +74,19 @@ export fn init() void {
     sdtx_desc.fonts[0] = sdtx.fontKc854();
     sdtx.setup(sdtx_desc);
 
-    // TODO: make these just functions that don't touch the state. 
-    state.atlas = TextureAtlas.init(alloc) catch @panic("OOM");
-    loadOfficialTextures() catch @panic("failed to load textures");
-    state.atlas.bake();
-   
-    state.sample = sg.makeSampler(.{
-        .min_filter = .NEAREST,
-        .mag_filter = .NEAREST,
-    });
-}
-
-const TextureAtlas = struct {
-    pixels: []u32,
-    desc: sg.ImageDesc = .{
-        .width = SIZE,
-        .height = SIZE,
-    },
-    x: usize = 0,
-    y: usize = 0,
-    rowHeight: usize = 0,
-    img: ?sg.Image = null,
-
-    const SIZE = 256;  // TODO: this will need to grow as i can parse more. should dynamiclly resize. 
-    const Uv = struct {
-        top: f32 = 0.0,
-        left: f32 = 0.0,
-        bottom: f32 = 1.0,
-        right: f32 = 1.0,
-    };
-
-    fn init(aalloc: std.mem.Allocator) !TextureAtlas {
-        return .{ .pixels= try aalloc.alloc(u32, SIZE*SIZE) };
-    }
-
-    fn add(self: *@This(), img: Img.Image) !Uv {
-        if (img.width > SIZE) {
-            return error.TooBig;
-        }
-        if (self.x + img.width > SIZE) {
-            self.x = 0;
-            self.y += self.rowHeight;
-            self.rowHeight = 0;
-        }
-
-        if (img.height > SIZE - self.y) {
-            return error.TooBig;
-        }
-
-        const sizef: f32 = @floatFromInt(SIZE);
-        const xf: f32 = @floatFromInt(self.x);
-        const yf: f32 = @floatFromInt(self.y);
-        var uv: Uv = .{ .top=yf/sizef, .left=xf/sizef};
-
-        self.rowHeight = @max(self.rowHeight, img.height);
-
-        switch (img.pixels) {
-            .rgba32 => |pixelData| {
-                for (0..img.height) |y| {
-                    for (0..img.width) |x| {
-                        const imgIndex = (y * img.height) + x;
-                        const atlasIndex = ((self.y + y) * SIZE) + self.x + x;
-                        self.pixels[atlasIndex] = pixelData[imgIndex].toU32Rgba();
-                    }
-                }
-            },
-            else => return error.InvalidFormat,
-        }
-
-        self.x += img.width;
-
-        uv.right = @as(f32, @floatFromInt(self.x)) / sizef;
-        uv.bottom = (yf + @as(f32, @floatFromInt(img.height))) / sizef;
-
-        std.debug.print("({} {}) -> ({}, {})\n", .{ self.x, self.y, uv.right, uv.bottom});
-
-        return uv;
-    }
-
-    // TODO: make this just return the img. and have this thing be a builder that doesnt need to stay around. 
-    fn bake(self: *TextureAtlas) void {
-        self.desc.data.subimage[0][0] = sg.asRange(self.pixels);
-        // TODO: does makeImage copy the data? can i free it now?
-        self.img = sg.makeImage(self.desc);
-    }
-};
-
-// TODO: put these all on an atlas so I dont have to keep changing the active texture on the gpu? need uv math
-fn loadOfficialTextures() !void {
     const texturesFolder = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Sprites";
     const tiles = official.tileSet.?;  // TODO: try load it then orelse. 
-    var blockIter = tiles.existingPos.iterator(.{});
-    while (blockIter.next()) |i| {
-        const data = tiles.posToData[i];
-        const path = try std.fmt.allocPrint(W.TEMP, "{s}/{s}_0_1.png", .{ texturesFolder, data.sprite });
-        const uv = loadTexture(path) catch |err| {
-            std.debug.print("Failed to load {s} {}", .{ path, err });
-            continue;
-        };
-        state.blockTextures.put(data.block, uv);
-    }
-}
-
-fn loadTexture(path: []const u8) !TextureAtlas.Uv {
-    const png = Img.png.PNG.formatInterface();
-    const imgData = try readAlloc(path, W.TEMP);
-    const wtf: []const u8 = imgData;
-    var imgReader: std.io.StreamSource = .{ .const_buffer=std.io.fixedBufferStream(wtf) };
-    const img = try png.readImage(W.TEMP, &imgReader);
-    return state.atlas.add(img);
+    const atlas = Textures.loadOfficialTextures(tiles, texturesFolder, alloc) catch @panic("failed to load textures");
+    state.atlas = atlas.atlas.bake();
+    state.blockTextures = atlas.map;
+    
+    const palletPath = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Palettes/default.png";
+    state.pallet = Textures.ColourSet.load(Textures.readPngFile(palletPath) catch @panic("failed to load pallet")) catch @panic("failed to load pallet");
+   
+    state.sample = sg.makeSampler(.{
+        .min_filter = .LINEAR,
+        .mag_filter = .LINEAR,
+    });
 }
 
 export fn evnt(event: [*c]const sapp.Event) void {
@@ -268,6 +184,7 @@ export fn frame() void {
     const dh = sapp.heightf();
     sgl.viewportf(0.0, 0.0, dw, dh, true);
 
+    // TODO: group all these onto a struct I can pass around. 
     // The scaling will be adjusted to always fit >= this many objects. This can change by level. 
     // Levels aren't squares, so calculate for both dimensions and use most restrictive. 
     const quadCountX: f32 = @floatFromInt(state.level.size[0]); 
@@ -281,8 +198,9 @@ export fn frame() void {
     {
         const scale: f32 = 1.0;
         sgl.defaults();
+        sgl.loadPipeline(state.pip3d);
         sgl.enableTexture();
-        sgl.texture(state.atlas.img.?, state.sample);
+        sgl.texture(state.atlas, state.sample);
         sgl.scale(scale, scale, 1.0);
         sgl.beginQuads(); 
 
@@ -292,53 +210,25 @@ export fn frame() void {
         const charSizePix = quadSizePix / charPerQuad;
         const textScale = charSizePix / 8.0;  // 1.0 means 8x8 pixel chars. 2.0 means 16x16 pixel chars. // TODO: set based on fiting 3 letters in a block 
         const logicToCharGrid = quadSizePix / charSizePix;
+        _ = logicToCharGrid;
         sdtx.canvas(sapp.widthf() / textScale, sapp.heightf() / textScale);
 
         // Shows which part of the screen you can actually be in. 
         drawBackground(.{ .r=20, .g=20, .b=20 }, .{quadWidthRat, quadHeightRat}, state.level.size);
 
 
-        // TODO: this is fucking insane. at least sort it instead of looping 20 times like a turtle. 
-        //       this doesnt even work because it draws all the yellow then all the text beacuse of the clever draw call coalescing. 
-        //       When using textures, can use the z coord on the vertex. 
-        for (0..21) |currentLayer| {
-            for (state.level.entities.items) |e| {
-                // TODO: cope with not having loaded the tileSet. 
-                const myLayer = official.tileSet.?.blockToLayer.get(e.block) orelse 20;
-                if (myLayer != currentLayer) {
-                    continue;
-                }
+        // TODO: When using textures, can use the z coord on the vertex for layer. 
 
-                if (state.blockTextures.get(e.block)) |uv| {
-                    drawOneQuad(e.pos, uv, .{quadWidthRat, quadHeightRat});
-                }
+        for (state.level.entities.items) |e| {
+            // TODO: more elegant coping with not having loaded the tileSet. validate everything up front and swap to other renderer if needed. 
+            const myLayer = if (official.tileSet != null) official.tileSet.?.blockToLayer.get(e.block) orelse 20 else 20;
+            _ = myLayer;
 
-                const x = @as(f32, @floatFromInt(e.pos[0]));
-                const y = @as(f32, @floatFromInt(e.pos[1]));
-                sdtx.origin(x * logicToCharGrid, y * logicToCharGrid);
-                sdtx.pos(0, 0);
-                const s = e.block.name();
-                switch (s.len) {
-                    0...3 => {
-                        sdtx.print("{s}", .{s});
-                    },
-                    4 => {
-                        sdtx.print("{s}", .{s[0..2]});
-                        sdtx.pos(0, 1);
-                        sdtx.print("{s}", .{s[2..]});
-                    },
-                    5...6 => {
-                        sdtx.print("{s}", .{s[0..3]});
-                        sdtx.pos(0, 1);
-                        sdtx.print("{s}", .{s[3..]});
-                    },
-                    else => {
-                        std.debug.panic("TODO: long word", .{});
-                    }
-                }
+            if (state.blockTextures.get(e.block)) |uv| {
+                const c: Colour = .{ .r=255, .g=255, .b=255 };
+                drawOneQuad(e.pos, uv, c, .{quadWidthRat, quadHeightRat});
             }
         }
-        
 
         switch (state.level.state) {
             .Win => alertText("You Win!"),
@@ -358,6 +248,33 @@ export fn frame() void {
     _ = W.frameArena.reset(.retain_capacity);
 }
 
+// TODO: keep the old rendering around (that doesnt rely on official data) and fall back if needed. 
+fn drawWord(e: W.Entity, logicToCharGrid: f32) void {
+    const x = @as(f32, @floatFromInt(e.pos[0]));
+    const y = @as(f32, @floatFromInt(e.pos[1]));
+    sdtx.origin(x * logicToCharGrid, y * logicToCharGrid);
+    sdtx.pos(0, 0);
+    const s = e.block.name();
+    switch (s.len) {
+        0...3 => {
+            sdtx.print("{s}", .{s});
+        },
+        4 => {
+            sdtx.print("{s}", .{s[0..2]});
+            sdtx.pos(0, 1);
+            sdtx.print("{s}", .{s[2..]});
+        },
+        5...6 => {
+            sdtx.print("{s}", .{s[0..3]});
+            sdtx.pos(0, 1);
+            sdtx.print("{s}", .{s[3..]});
+        },
+        else => {
+            std.debug.panic("TODO: long word", .{});
+        }
+    }
+}
+
 fn alertText(comptime msg: []const u8) void {
     const winTextScale = 3.0;
     sdtx.color3b(255, 0, 0);
@@ -367,13 +284,14 @@ fn alertText(comptime msg: []const u8) void {
     sdtx.print(msg, .{});
 }
 
-const Colour = struct {
+pub const Colour = struct {
     r: u8,
     g: u8,
     b: u8,
     a: u8 = 255  // TODO: I feel like this doesn't work. 
 };
 
+// TODO: combine this with the other one. reserve one slot on atlas for all white so just use tint. 
 // Requires context setup before call. 
 fn drawOneQuaBoring(pos: W.Pos, c: Colour, size: @Vector(2, f32)) void {
     const x = @as(f32, @floatFromInt(pos[0]));
@@ -395,7 +313,8 @@ fn drawOneQuaBoring(pos: W.Pos, c: Colour, size: @Vector(2, f32)) void {
     sgl.v2fC4b(left, top, c.r, c.g, c.b, c.a);
 }
 
-fn drawOneQuad(pos: W.Pos, uv: TextureAtlas.Uv, size: @Vector(2, f32)) void {
+// The colour tints the texture. All the game's assets are grayscale and re-themed. 
+fn drawOneQuad(pos: W.Pos, uv: Textures.TextureAtlas.Uv, c: Colour, size: @Vector(2, f32)) void {
     const x = @as(f32, @floatFromInt(pos[0]));
     const y = @as(f32, @floatFromInt(pos[1]));
     // Changing coordinate systems: 
@@ -409,10 +328,10 @@ fn drawOneQuad(pos: W.Pos, uv: TextureAtlas.Uv, size: @Vector(2, f32)) void {
     const bottom = (-(y + 1) * (size[1] * 2.0)) + 1;
     
     // Center is (0, 0). Screen is 2x2. Top left is (-1, 1). Those are affected by the scale.
-    sgl.v2fT2f(left, bottom, uv.left, uv.bottom);
-    sgl.v2fT2f(right, bottom, uv.right, uv.bottom);
-    sgl.v2fT2f(right, top, uv.right, uv.top);
-    sgl.v2fT2f(left, top, uv.left, uv.top);
+    sgl.v2fT2fC3b(left, bottom, uv.left, uv.bottom, c.r, c.g, c.b);
+    sgl.v2fT2fC3b(right, bottom, uv.right, uv.bottom, c.r, c.g, c.b);
+    sgl.v2fT2fC3b(right, top, uv.right, uv.top, c.r, c.g, c.b);
+    sgl.v2fT2fC3b(left, top, uv.left, uv.top, c.r, c.g, c.b);
 }
 
 

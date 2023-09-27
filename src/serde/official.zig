@@ -10,6 +10,8 @@
 /// I think the .ld files are diffs agains that structure from values.lua. 
 /// Then every LAYR there's a DATA block of a bunch of 3s. Those are direction! Using the level editor to place dudes can get 0-3 there. 
 /// The editor lets you put overlapping dudes on different layers, and they just show up as a new LAYR block in the tilemap. 
+/// For using thier textures, the images are grayscale and values.lua has a 'color' field for each entity, 
+/// but its just two numbers like another tile position. .ld gives a pallete for the level! that's a png tile map of colours.
 
 const std = @import("std");
 const W = @import("../world.zig");
