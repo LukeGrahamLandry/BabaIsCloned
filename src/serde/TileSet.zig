@@ -8,6 +8,7 @@ const logErr = @import("official.zig").logErr;
 const Lexer = @import("LuaLexer.zig");
 const TileSet = @This();
 
+/// The tile set has sprite name strings that point back into `bytes` so caller can't free it until after loading textures. 
 pub fn parse(bytes: []const u8) !TileSet {
     var tiles: TileSet = .{};
 
@@ -61,15 +62,9 @@ pub fn parse(bytes: []const u8) !TileSet {
                 object.layer = try std.fmt.parseInt(u8, layerStr, 10);
                 _ = try lexer.expect(.comma, "Expected ',' after field.");
             } else if (std.mem.eql(u8, fieldName.lexeme, "tile")) {
-                const MSG = "Expected 'tile' of type object.";
-                _ = try lexer.expect(.leftBrace, MSG);
-                const xStr = try lexer.expect(.number, MSG);
-                _ = try lexer.expect(.comma, MSG);
-                const yStr = try lexer.expect(.number, MSG);
-                _ = try lexer.expect(.rightBrace, MSG);
-                _ = try lexer.expect(.comma, MSG);
-                object.x = try std.fmt.parseInt(u8, xStr, 10);
-                object.y = try std.fmt.parseInt(u8, yStr, 10);
+                object.tile = try parseTilePos(&lexer,  "Expected 'tile' of type object.");
+            } else if (std.mem.eql(u8, fieldName.lexeme, "colour")) {
+                object.colour = try parseTilePos(&lexer,  "Expected 'colour' of type object.");
             } else {
                 try lexer.skipCurrentValue();
             }
@@ -85,6 +80,20 @@ pub fn parse(bytes: []const u8) !TileSet {
     return tiles;
 }
 
+/// Consumes `{ 0, 0 },`
+fn parseTilePos(lexer: *Lexer, comptime msg: []const u8) !TilePos {
+    _ = try lexer.expect(.leftBrace, msg);
+    const xStr = try lexer.expect(.number, msg);
+    _ = try lexer.expect(.comma, msg);
+    const yStr = try lexer.expect(.number, msg);
+    _ = try lexer.expect(.rightBrace, msg);
+    _ = try lexer.expect(.comma, msg);
+    return .{
+        try std.fmt.parseInt(u8, xStr, 10),
+        try std.fmt.parseInt(u8, yStr, 10)
+    };
+}
+
 const strToBlock = @import("official.zig").strToBlock;
 
 // TODO: tile (0, 0) is magic edge block. Or just make the levels one smaller in every dimension since I'm doing bounds checks anyway. 
@@ -92,12 +101,22 @@ const SIZE = 17;
 const Data = struct {
     block: W.Block,
     id: u16,
+
+    // TODO: probably dont need these here because always lookup by Block (but do diff stuff first to see)
     layer: u8,
+    colour: TilePos,
+
 
     // TODO: I dislike that this thing owns memory. 
     sprite: []const u8
 };
 
+const BlockData = struct {
+    layer: u8,
+    colour: TilePos
+};
+
+const TilePos = @Vector(2, u8);
 const BitSet = std.bit_set.IntegerBitSet(SIZE * SIZE);
 existingPos: BitSet = BitSet.initEmpty(),
 existingId: BitSet = BitSet.initEmpty(),
@@ -111,16 +130,16 @@ idToPos: [SIZE * SIZE] u16 = undefined,
 
 // TODO: what happens when they want two of the same block type but on different layers? do they?
 //       add assertions to catch it once i impl mutation 
-blockToLayer: BlockMap(u8) = .{},
+blockToLayer: BlockMap(BlockData) = .{},
 
 // TODO: remove once I can parse all. this sucks. just cause I don't want to change the test rn. 
 attempts: usize = 0, 
 
 
 fn add(self: *TileSet, object: Object) !void {
-    const index = (object.y * SIZE) + object.x;
+    const index = (object.tile[1] * SIZE) + object.tile[0];
 
-    try require(index < self.idToPos.len, "Object index ({} {}) => {} is too high.", .{ object.x, object.y, index });
+    try require(index < self.idToPos.len, "Object index {} => {} is too high.", .{ object.tile, index });
     try require(object.id < self.posToData.len, "Object id {} is too high.", .{ object.id });
     try require(!self.existingPos.isSet(index), "Tried to overwrite tile position with {}", .{ object });
     try require(!self.existingId.isSet(object.id), "Tried to overwrite tile id with {}", .{ object });
@@ -137,14 +156,18 @@ fn add(self: *TileSet, object: Object) !void {
     self.existingPos.set(index);
     self.existingId.set(object.id);
     // TODO: sprite exists as a seperate field. do they every actually change it?
-    self.posToData[index] = .{ .id=object.id, .block=block, .layer=object.layer, .sprite=object.name.? };
+    self.posToData[index] = .{ .id=object.id, .block=block, .layer=object.layer, .sprite=object.name.?, .colour=object.colour };
     self.idToPos[object.id] = index;
     if (self.blockToLayer.contains(block)) {
         logErr("Repeated block type {}", .{ block });
     }
-    self.blockToLayer.put(block, object.layer);
+    self.blockToLayer.put(block, .{
+        .layer = object.layer,
+        .colour = object.colour, 
+    });
 }
 
+// TODO: report empty/edge seperatly from missing tile? maybe return a special one for failed that can still be rendered so its easy to see when a level is broken.  
 pub fn getBlock(self: TileSet, x: usize, y: usize) ?W.Block {
     const empty = x == 255 and y == 255;
     const edge = x == 0 and y == 0;
@@ -153,6 +176,7 @@ pub fn getBlock(self: TileSet, x: usize, y: usize) ?W.Block {
     }
     const index = (y * SIZE) + x;
     if (index >= self.existingPos.capacity() or !self.existingPos.isSet(index)) {
+        logErr("Failed to read tile ({}, {})", .{ x, y });
         return null;
     }
     return self.posToData[index].block;
@@ -199,9 +223,9 @@ pub fn BlockMap(comptime V: type) type {
 const Object = struct {
     name: ?[]const u8 = null,
     id: u16,
-    x: u8 = 255,
-    y: u8 = 255,
-    layer: u8 = 20
+    tile: TilePos = .{ 0, 0 },
+    colour: TilePos = .{ 0, 0 },
+    layer: u8 = 20,
 };
 
 // TODO: ignore this test if real game not installed. 

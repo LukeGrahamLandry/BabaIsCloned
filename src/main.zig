@@ -54,8 +54,12 @@ export fn init() void {
             .compare = .LESS_EQUAL,
         },
         .cull_mode = .BACK,
+        // This makes transparency work with different z coordinates
+        // Without it, if the front thing is drawn before the back thing, the front transparent parts are just solid black.
+        .alpha_to_coverage_enabled = true,
     };
     
+    // This makes transparency work (instead of just ignoring alpha)
     pipeDesc.colors[0].blend = .{
         .enabled = true,
         // NOT *_factor_alpha! We want to apply a factor TO rgb, the factor is based on the alpha. 
@@ -201,6 +205,8 @@ export fn frame() void {
         sgl.loadPipeline(state.pip3d);
         sgl.enableTexture();
         sgl.texture(state.atlas, state.sample);
+        // sgl.matrixModeModelview();
+        // sgl.loadIdentity();
         sgl.scale(scale, scale, 1.0);
         sgl.beginQuads(); 
 
@@ -221,12 +227,11 @@ export fn frame() void {
 
         for (state.level.entities.items) |e| {
             // TODO: more elegant coping with not having loaded the tileSet. validate everything up front and swap to other renderer if needed. 
-            const myLayer = if (official.tileSet != null) official.tileSet.?.blockToLayer.get(e.block) orelse 20 else 20;
-            _ = myLayer;
+            const info = official.tileSet.?.blockToLayer.get(e.block).?;
 
             if (state.blockTextures.get(e.block)) |uv| {
-                const c: Colour = .{ .r=255, .g=255, .b=255 };
-                drawOneQuad(e.pos, uv, c, .{quadWidthRat, quadHeightRat});
+                const c: Colour = state.pallet.get(info.colour[0], info.colour[1]);
+                drawOneQuad(e.pos, uv, c, .{quadWidthRat, quadHeightRat}, info.layer);
             }
         }
 
@@ -314,7 +319,7 @@ fn drawOneQuaBoring(pos: W.Pos, c: Colour, size: @Vector(2, f32)) void {
 }
 
 // The colour tints the texture. All the game's assets are grayscale and re-themed. 
-fn drawOneQuad(pos: W.Pos, uv: Textures.TextureAtlas.Uv, c: Colour, size: @Vector(2, f32)) void {
+fn drawOneQuad(pos: W.Pos, uv: Textures.TextureAtlas.Uv, c: Colour, size: @Vector(2, f32), layer: u8) void {
     const x = @as(f32, @floatFromInt(pos[0]));
     const y = @as(f32, @floatFromInt(pos[1]));
     // Changing coordinate systems: 
@@ -328,10 +333,11 @@ fn drawOneQuad(pos: W.Pos, uv: Textures.TextureAtlas.Uv, c: Colour, size: @Vecto
     const bottom = (-(y + 1) * (size[1] * 2.0)) + 1;
     
     // Center is (0, 0). Screen is 2x2. Top left is (-1, 1). Those are affected by the scale.
-    sgl.v2fT2fC3b(left, bottom, uv.left, uv.bottom, c.r, c.g, c.b);
-    sgl.v2fT2fC3b(right, bottom, uv.right, uv.bottom, c.r, c.g, c.b);
-    sgl.v2fT2fC3b(right, top, uv.right, uv.top, c.r, c.g, c.b);
-    sgl.v2fT2fC3b(left, top, uv.left, uv.top, c.r, c.g, c.b);
+    const z = 1.0 - (@as(f32, @floatFromInt(layer)) / 100.0);
+    sgl.v3fT2fC3b(left, bottom, z, uv.left, uv.bottom, c.r, c.g, c.b);
+    sgl.v3fT2fC3b(right, bottom, z, uv.right, uv.bottom, c.r, c.g, c.b);
+    sgl.v3fT2fC3b(right, top, z, uv.right, uv.top, c.r, c.g, c.b);
+    sgl.v3fT2fC3b(left, top, z, uv.left, uv.top, c.r, c.g, c.b);
 }
 
 
@@ -345,10 +351,11 @@ fn drawBackground(c: Colour, size: @Vector(2, f32), worldSize: W.Pos) void {
     const bottom = (-h * (size[1] * 2.0)) + 1;
     
     // Center is (0, 0). Screen is 2x2. Top left is (-1, 1). Those are affected by the scale.
-    sgl.v2fC4b(left, bottom, c.r, c.g, c.b, c.a);
-    sgl.v2fC4b(right, bottom, c.r, c.g, c.b, c.a);
-    sgl.v2fC4b(right, top, c.r, c.g, c.b, c.a);
-    sgl.v2fC4b(left, top, c.r, c.g, c.b, c.a);
+    const z = 1.0;  // put this at the back so its behind all layers. 
+    sgl.v3fC4b(left, bottom, z, c.r, c.g, c.b, c.a);
+    sgl.v3fC4b(right, bottom, z,c.r, c.g, c.b, c.a);
+    sgl.v3fC4b(right, top, z, c.r, c.g, c.b, c.a);
+    sgl.v3fC4b(left, top, z, c.r, c.g, c.b, c.a);
 }
 
 

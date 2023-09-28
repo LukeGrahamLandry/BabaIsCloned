@@ -7,7 +7,6 @@ pub const Pos = @Vector(2, i32);
 pub var frameArena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
 pub var TEMP = frameArena.allocator();
 
-// TODO: for undo, instead of doing work to reverse things like noun replacements, could just replay all inputs minus one. is anything random? 
 pub const Level = struct {
     entities: std.ArrayList(Entity),
     actionHistory: std.ArrayList(Input),  // TODO: include in save file. 

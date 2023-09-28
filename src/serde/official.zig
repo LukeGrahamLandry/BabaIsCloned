@@ -12,6 +12,8 @@
 /// The editor lets you put overlapping dudes on different layers, and they just show up as a new LAYR block in the tilemap. 
 /// For using thier textures, the images are grayscale and values.lua has a 'color' field for each entity, 
 /// but its just two numbers like another tile position. .ld gives a pallete for the level! that's a png tile map of colours.
+/// Using those to tint the object textures gets the right colours! But the saturation on text seems super low. 
+/// The values also has a 'layer' field that says who should be rendered on top. So can just use that for the z coord.
 
 const std = @import("std");
 const W = @import("../world.zig");
@@ -29,6 +31,7 @@ pub fn readAlloc(absPath: []const u8, alloc: std.mem.Allocator) ![]u8 {
 pub var tileSet: ?TileSet = null;
 
 // TODO: seperate doing the work from accessing the file system. 
+// TODO: the boarder of the tile map is (always?) magic 0 tile that means a solid wall you cant interact with. 
 pub fn loadLevel(alloc: std.mem.Allocator, tileMapPath: []const u8) !W.Level {
     const valuesPath = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/values.lua";
     // TODO: i want to use temp alloc but the TileSet keeps the little strings for sprite paths. 
@@ -56,23 +59,6 @@ pub fn loadLevel(alloc: std.mem.Allocator, tileMapPath: []const u8) !W.Level {
             }
         }
     }
-    
-    // const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/baba/{}level.l";
-    // for (0..1) |i| {  // 340
-    //     std.debug.print("START {}\n", .{i});
-    //     var buf: [512] u8 = undefined;
-    //     const path = try std.fmt.bufPrint(&buf, template, .{ i });
-    //     const data = try readAlloc(path, W.TEMP);
-        
-    //     const tiles = TileMap.parse(data, W.TEM) catch {
-    //         std.debug.print("FAIL {}\n", .{i});
-    //         continue;
-    //     };
-    //     std.mem.doNotOptimizeAway(tiles);
-    // }
-
-
-    
 
     self.updateRules();
     return self;

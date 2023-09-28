@@ -146,6 +146,11 @@ pub const ColourSet = struct {
         }
         return self;
     }
+
+    // TODO: take TilePos? 
+    pub fn get(self: ColourSet, x: u8, y: u8) Colour {
+        return self.data[(y * width) + x];
+    }
 };
 
 // Reads into the Temp allocator since sokol wants to own a copy of the data anyway. 

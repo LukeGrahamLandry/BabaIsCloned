@@ -160,13 +160,13 @@ fn peek(self: *Lexer) !u8 {
 }
 
 test "lex lua" {
-    const src = "{ a = { \n\n\n b = { 1,0},c = -10, \n --|this is a comment \" }}}{{{| \n d = \"e\"}, }";
-    const tokens = &[_] TokenType { .leftBrace, .identifier, .equal, .leftBrace, .identifier, .equal, .leftBrace, .number, .comma, .number, .rightBrace, .comma, .identifier, .equal, .number, .comma, .identifier, .equal, .string, .rightBrace, .comma, .rightBrace };
+    const src = "{ a = { \n\n\n b = { 1,0},c = -10, \n --|this is a comment \" }}}{{{| \n d = \"e\"}, ";
+    const tokens = &[_] TokenType { .leftBrace, .identifier, .equal, .leftBrace, .identifier, .equal, .leftBrace, .number, .comma, .number, .rightBrace, .comma, .identifier, .equal, .number, .comma, .identifier, .equal, .string, .rightBrace, .comma };
     var lexer: Lexer = .{ .data=src };
     for (tokens) |expected| {
         try std.testing.expectEqual(expected, (try lexer.next()).ty);
     }
 
     try std.testing.expect(std.meta.isError(lexer.next()));
-    try std.testing.expectEqual(lexer.depth, 0);
+    try std.testing.expectEqual(lexer.depth, 1);
 }
