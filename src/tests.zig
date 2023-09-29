@@ -2,6 +2,110 @@ const std = @import("std");
 const W = @import("world.zig");
 const expectEq = std.testing.expectEqual;
 
+// TODO: do i want to save whole level state and check that everything matches.
+//       feels less elegant and dont want to commit such a direct derivitive of the real game's data.
+//       hash of it? but then you can't see the problem. 
+//       currently seems like a lot could go wrong and still have the test pass. 
+const testRoutesPath = "tests.txt";
+pub fn saveTestRoute(levelId: usize, level: W.Level) !void {
+    var file = try std.fs.cwd().openFile(testRoutesPath, .{ .mode=.read_only });
+    var testCase = std.ArrayList(u8).init(std.heap.c_allocator);
+    defer testCase.deinit();
+    var reader = file.reader();
+    try reader.readAllArrayList(&testCase, 999999);  // TODO: how do I just append to a file. 
+    var out = testCase.writer();
+    file.close();
+
+    const startI = testCase.items.len;
+
+    try out.print("baba/{} {s} ", .{ levelId, @tagName(level.state) });
+    for (level.actionHistory.items) |a| {
+        const c = @as(u8, switch (a) {
+            .Left => '<',
+            .Right => '>',
+            .Up => '^',
+            .Down => 'v',
+            .Wait => '=',
+        });
+        try testCase.append(c);
+    }
+    try testCase.append('\n');
+
+    std.debug.print("SAVE TEST: {s}\n", .{ testCase.items[startI..] });
+    var file2 = try std.fs.cwd().openFile(testRoutesPath, .{ .mode=.write_only });
+    try file2.writeAll(testCase.items);
+    file2.close();
+}
+
+pub const TestCase = struct {
+    actions: []const W.Input,
+    level: W.Level,
+    endState: W.GameState,
+
+    pub fn deinit(self: *TestCase) void {
+        // TODO
+        _ = self;
+
+    }
+};
+
+// TODO: this leaks stuff if error
+pub fn loadTests() ![]TestCase {
+    var file = try std.fs.cwd().openFile(testRoutesPath, .{});
+    defer file.close();
+    var tests = std.ArrayList(TestCase).init(std.heap.c_allocator);
+    const data = try file.readToEndAlloc(W.TEMP, std.math.maxInt(u16));
+    const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/{s}level.l";
+        
+    var lines = std.mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0){
+            continue;
+        }
+        std.debug.print("LOAD: {s}\n", .{ line });
+        var parts = std.mem.splitScalar(u8, line, ' ');
+        const fileName = parts.next().?;
+        const path = try std.fmt.allocPrint(W.TEMP, template, .{fileName});
+        var level = try @import("serde/official.zig").loadLevel(std.heap.c_allocator, path); 
+        const endState = std.meta.stringToEnum(W.GameState, parts.next().?).?;
+        const actionStr = parts.next().?;
+        var actions = std.ArrayList(W.Input).init(std.heap.c_allocator);
+        for (actionStr) |c| {
+            const a: W.Input = switch (c) {
+                '<' => .Left,
+                '>' => .Right,
+                '^' => .Up,
+                'v' => .Down,
+                '=' => .Wait,
+                else => std.debug.panic("Unexpected action char: '{}'", .{c}),
+            };
+            try actions.append(a);
+        }
+        try tests.append(.{
+            .actions = try actions.toOwnedSlice(),
+            .endState = endState,
+            .level = level,
+        });
+    }
+
+    return try tests.toOwnedSlice();    
+}
+
+test "run tests.txt" {
+    var cases = try loadTests();
+    for (cases, 0..) |*tCase, i| {
+        for (tCase.actions) |a| {
+            try tCase.level.handleInput(a);
+        }
+        if (tCase.endState != tCase.level.state) {
+            std.debug.print("*Case {} Expected {s} but got {s}.\n", .{ i, @tagName(tCase.endState), @tagName(tCase.level.state) });
+            return error.TestExpectedEqual;
+        }
+
+    }
+    // TODO: leaks it
+}
+
 test "world repr sanity" {
     var w = W.Level.init(std.heap.c_allocator, .{ 20, 30 });
 

@@ -37,11 +37,12 @@ pub fn loadOfficialTextures(tiles: TileSet, texturesFolder: []const u8, alloc: s
 /// As a bonus, its faster to just give one texture to the gpu, instead of switching it with many draw calls. 
 pub const TextureAtlas = struct {
     pixels: []u32,
-    x: usize = 0,
+    x: usize = 16,
     y: usize = 0,
-    rowHeight: usize = 0,
+    rowHeight: usize = 16,
 
     const SIZE = 256;  // TODO: this will need to grow as i can parse more. should dynamiclly resize. 
+    const SIZEF = @as(f32, SIZE);
     pub const Uv = struct {
         top: f32 = 0.0,
         left: f32 = 0.0,
@@ -49,11 +50,25 @@ pub const TextureAtlas = struct {
         right: f32 = 1.0,
     };
 
+    pub const Blank: Uv = .{
+        .top = 1.0 / SIZEF,
+        .left = 1.0 / SIZEF,
+        .right = 2.0 / SIZEF,
+        .bottom = 2.0 / SIZEF,
+    };
+    
     pub fn init(aalloc: std.mem.Allocator) !TextureAtlas {
         var self: @This() = .{ .pixels= try aalloc.alloc(u32, SIZE*SIZE) };
         // TODO: should ahave an all white slot for drawing the background. 
         for (0..SIZE*SIZE) |i| {  // TODO: remove? 
-            self.pixels[i] = 0xFFFFFFFF;  // TODO: if not 0, you can see a little bit of edge around the guy. suggests I need some padding regardless if I cant trust my uv calculations to have no error. is it just from floats? 
+            self.pixels[i] = 0;  // TODO: if not 0, you can see a little bit of edge around the guy. suggests I need some padding regardless if I cant trust my uv calculations to have no error. is it just from floats? 
+        }
+       // TODO: this is awquard. dont like hardcoding the starts to +16. should be able to call add with this data. 
+        for (0..3) |x| {
+            for (0..3) |y| {
+                const i = y * SIZE + x;
+                self.pixels[i] = 0xFFFFFFFF;
+            }
         }
         return self;
     }
@@ -73,10 +88,9 @@ pub const TextureAtlas = struct {
             return error.TooBig;
         }
 
-        const sizef: f32 = @floatFromInt(SIZE);
         const xf: f32 = @floatFromInt(self.x);
         const yf: f32 = @floatFromInt(self.y);
-        var uv: Uv = .{ .top=yf/sizef, .left=xf/sizef};
+        var uv: Uv = .{ .top=yf/SIZEF, .left=xf/SIZEF};
 
         self.rowHeight = @max(self.rowHeight, img.height);
 
@@ -102,8 +116,8 @@ pub const TextureAtlas = struct {
 
         self.x += img.width;
 
-        uv.right = @as(f32, @floatFromInt(self.x)) / sizef;
-        uv.bottom = (yf + @as(f32, @floatFromInt(img.height))) / sizef;
+        uv.right = @as(f32, @floatFromInt(self.x)) / SIZEF;
+        uv.bottom = (yf + @as(f32, @floatFromInt(img.height))) / SIZEF;
 
         return uv;
     }

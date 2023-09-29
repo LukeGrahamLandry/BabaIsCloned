@@ -12,6 +12,7 @@ const save = @import("serde/save.zig");
 const official = @import("serde/official.zig");
 const Img = @import("zigimg");
 const Textures = @import("textures.zig");
+const Test = @import("tests.zig");
 
 const SAVE_FOLDER = "zig-out";
 const SAVE_FILE = SAVE_FOLDER ++ "/save.baba";
@@ -26,6 +27,11 @@ const state = struct {
     var atlas: sg.Image = undefined;
     var blockTextures: Textures.UvMap = .{};
     var pallet: Textures.ColourSet = .{};
+    // TODO: put these in thier own struct. 
+    var tests: ?[]Test.TestCase = null;  // TODO: dont love this. seperate the rendering from the thing that drives actions somehow? 
+    var testIndex: usize = 0;
+    var actionIndex: usize = 0;
+    var frames: usize = 0;
 };
 
 const alloc = std.heap.c_allocator;
@@ -38,11 +44,11 @@ export fn init() void {
         state.initialLevel = state.level.clone(alloc) catch @panic("OOM");
     };
    
+    // TODO: could set the limits much lower than defaults if i wanted to be obsessive about using tiny memory. 
     sg.setup(.{
         .context = sgapp.context(),
         .logger = .{ .func = slog.func },
     });
-    
     sgl.setup(.{
         .logger = .{ .func = slog.func },
     });
@@ -137,6 +143,22 @@ fn handle_event(event: sapp.Event) !void {
                         std.debug.print("Failed to load level {}\n", .{state.levelIndex});
                     };
                 },
+                .T => {
+                    try @import("tests.zig").saveTestRoute(state.levelIndex, state.level);
+                },
+                .P => {
+                    if (state.tests) |t| {
+                        for (t) |*tt| {
+                            tt.deinit();
+                        }
+                    }
+                    state.tests = try Test.loadTests();
+                    state.testIndex = 0;
+                    state.actionIndex = 0;
+                    state.level.deinit();
+                    state.level = try state.tests.?[0].level.clone(alloc);
+                    std.debug.print("start playing tests\n", .{});
+                },
                 else => {}
             }
         },
@@ -183,67 +205,75 @@ fn saveToFile(path: []const u8, level: W.Level) !void {
     try saveFile.writer().writeAll(data);
 }
 
-export fn frame() void {
-    const dw = sapp.widthf();
-    const dh = sapp.heightf();
-    sgl.viewportf(0.0, 0.0, dw, dh, true);
+const PosF = @Vector(2, f32);
+const Sizes = struct { quadNorm: PosF, quadPix: f32 };
 
-    // TODO: group all these onto a struct I can pass around. 
+fn calcSizes(levelSize: W.Pos) Sizes {
     // The scaling will be adjusted to always fit >= this many objects. This can change by level. 
     // Levels aren't squares, so calculate for both dimensions and use most restrictive. 
-    const quadCountX: f32 = @floatFromInt(state.level.size[0]); 
-    const quadCountY: f32 = @floatFromInt(state.level.size[1]); 
+    const dw = sapp.widthf();
+    const dh = sapp.heightf();
+    const quadCountX: f32 = @floatFromInt(levelSize[0]); 
+    const quadCountY: f32 = @floatFromInt(levelSize[1]); 
     const quadSizePixX = dw / quadCountX;
     const quadSizePixY = dh / quadCountY;
-    const quadSizePix = @min(quadSizePixX, quadSizePixY);
-    const quadWidthRat = quadSizePix / dw;
-    const quadHeightRat = quadSizePix / dh;
+    const quadPix = @min(quadSizePixX, quadSizePixY);
+    const quadWidthRat = quadPix / dw;
+    const quadHeightRat = quadPix / dh;
+    return .{ .quadNorm = .{quadWidthRat, quadHeightRat}, .quadPix=quadPix };
+}
 
-    {
-        const scale: f32 = 1.0;
-        sgl.defaults();
-        sgl.loadPipeline(state.pip3d);
-        sgl.enableTexture();
-        sgl.texture(state.atlas, state.sample);
-        // sgl.matrixModeModelview();
-        // sgl.loadIdentity();
-        sgl.scale(scale, scale, 1.0);
-        sgl.beginQuads(); 
+export fn frame() void {
+    const s = calcSizes(state.level.size);
 
-        sdtx.font(0);
-        sdtx.color3b(255, 128, 0);
-        const charPerQuad = 3.0;
-        const charSizePix = quadSizePix / charPerQuad;
-        const textScale = charSizePix / 8.0;  // 1.0 means 8x8 pixel chars. 2.0 means 16x16 pixel chars. // TODO: set based on fiting 3 letters in a block 
-        const logicToCharGrid = quadSizePix / charSizePix;
-        _ = logicToCharGrid;
-        sdtx.canvas(sapp.widthf() / textScale, sapp.heightf() / textScale);
-
-        // Shows which part of the screen you can actually be in. 
-        drawBackground(.{ .r=20, .g=20, .b=20 }, .{quadWidthRat, quadHeightRat}, state.level.size);
-
-
-        // TODO: When using textures, can use the z coord on the vertex for layer. 
-
-        for (state.level.entities.items) |e| {
-            // TODO: more elegant coping with not having loaded the tileSet. validate everything up front and swap to other renderer if needed. 
-            const info = official.tileSet.?.blockToLayer.get(e.block).?;
-
-            if (state.blockTextures.get(e.block)) |uv| {
-                const c: Colour = state.pallet.get(info.colour[0], info.colour[1]);
-                drawOneQuad(e.pos, uv, c, .{quadWidthRat, quadHeightRat}, info.layer);
+    if (state.tests) |tests| {
+        if (state.frames % 1 == 0) {
+            if (state.testIndex >= tests.len) {
+                std.debug.print("done playing tests\n", .{});
+                for (tests) |*tt| {
+                    tt.deinit();
+                }
+                state.tests = null;
+                reloadLevel(state.levelIndex, false) catch @panic("failed reload");
+            } else {
+                const t = &tests[state.testIndex];
+                if (state.actionIndex >= t.actions.len) {
+                    state.actionIndex = 0;
+                    state.testIndex += 1;
+                    if (state.testIndex < tests.len) {  // TODO: ughghhghg
+                        const tt = &tests[state.testIndex];
+                        state.level = tt.level.clone(alloc) catch @panic("OOM");
+                    }
+                } else {
+                    const a = t.actions[state.actionIndex];
+                    state.level.handleInput(a) catch @panic("failed to play test move");
+                    state.actionIndex += 1;
+                }
             }
         }
-
-        switch (state.level.state) {
-            .Win => alertText("You Win!"),
-            .Lose => alertText("Press 'r' to restart."),
-            .None => {},
-        }
-
-        sgl.end();
     }
 
+    sdtx.font(0);
+    sgl.viewportf(0.0, 0.0, sapp.widthf(), sapp.heightf(), true);
+    sgl.defaults();
+    sgl.loadPipeline(state.pip3d);  // activate the one with transparency enabled. 
+    sgl.enableTexture();
+    sgl.texture(state.atlas, state.sample);
+    sgl.beginQuads(); 
+
+    // Shows which part of the screen you can actually be in. 
+    drawBackground(.{ .r=20, .g=20, .b=20 }, s.quadNorm, state.level.size);
+
+    renderOfficial(s.quadNorm);
+    // renderUgly(s);
+
+    switch (state.level.state) {
+        .Win => alertText("You Win!"),
+        .Lose => alertText("Press 'r' to restart."),
+        .None => {},
+    }
+
+    sgl.end();
     sg.beginDefaultPass(state.pass_action, sapp.width(), sapp.height());
     sgl.draw();
     sdtx.draw();
@@ -251,9 +281,40 @@ export fn frame() void {
     sg.commit();
 
     _ = W.frameArena.reset(.retain_capacity);
+    state.frames += 1; // TODO: timer and let you change rate. 
 }
 
-// TODO: keep the old rendering around (that doesnt rely on official data) and fall back if needed. 
+fn renderOfficial(quadNorm: PosF) void {
+    for (state.level.entities.items) |e| {
+        // TODO: more elegant coping with not having loaded the tileSet. validate everything up front and swap to other renderer if needed. 
+        const info = official.tileSet.?.blockToLayer.get(e.block).?;
+
+        if (state.blockTextures.get(e.block)) |uv| {
+            const c: Colour = state.pallet.get(info.colour[0], info.colour[1]);
+            drawOneQuad(e.pos, uv, c, quadNorm, info.layer);
+        }
+    }
+}
+
+// TODO: auto fall back to this if data not loaded. 
+fn renderUgly(s: Sizes) void {
+    sdtx.color3b(255, 128, 0);
+    const charPerQuad = 3.0;
+    const charSizePix = s.quadPix / charPerQuad;
+    const textScale = charSizePix / 8.0;  // 1.0 means 8x8 pixel chars. 2.0 means 16x16 pixel chars. 
+    const logicToCharGrid = s.quadPix / charSizePix;
+    sdtx.canvas(sapp.widthf() / textScale, sapp.heightf() / textScale);
+
+    const textColour: Colour = .{ .r=255, .g=255, .b=255 };
+    const objColour: Colour = .{ .r=255, .g=255, .b=128 };
+
+    for (state.level.entities.items) |e| {
+        const c = if (e.block.isText()) textColour else objColour;
+        drawOneQuad(e.pos, Textures.TextureAtlas.Blank, c, s.quadNorm, 20); 
+        drawWord(e, logicToCharGrid);
+    }
+}
+
 fn drawWord(e: W.Entity, logicToCharGrid: f32) void {
     const x = @as(f32, @floatFromInt(e.pos[0]));
     const y = @as(f32, @floatFromInt(e.pos[1]));
@@ -293,36 +354,13 @@ pub const Colour = struct {
     r: u8,
     g: u8,
     b: u8,
-    a: u8 = 255  // TODO: I feel like this doesn't work. 
 };
 
-// TODO: combine this with the other one. reserve one slot on atlas for all white so just use tint. 
-// Requires context setup before call. 
-fn drawOneQuaBoring(pos: W.Pos, c: Colour, size: @Vector(2, f32)) void {
-    const x = @as(f32, @floatFromInt(pos[0]));
-    const y = @as(f32, @floatFromInt(pos[1]));
-    // Changing coordinate systems: 
-    // - right/bottom are offset 1 (logic) unit to the next grid cell. 
-    // - size is scaled because its a percent of the screen the quad should take up but we want in range (-1, 1).
-    // - final result is offset 1 (device) unit to move origin from center to top left. 
-    // - y is flipped
-    const left = (x * (size[0] * 2.0)) - 1;
-    const right = ((x + 1) * (size[0] * 2.0)) - 1;
-    const top = (-y * (size[1] * 2.0)) + 1;
-    const bottom = (-(y + 1) * (size[1] * 2.0)) + 1;
-    
-    // Center is (0, 0). Screen is 2x2. Top left is (-1, 1). Those are affected by the scale.
-    sgl.v2fC4b(left, bottom, c.r, c.g, c.b, c.a);
-    sgl.v2fC4b(right, bottom, c.r, c.g, c.b, c.a);
-    sgl.v2fC4b(right, top, c.r, c.g, c.b, c.a);
-    sgl.v2fC4b(left, top, c.r, c.g, c.b, c.a);
-}
-
 // The colour tints the texture. All the game's assets are grayscale and re-themed. 
-fn drawOneQuad(pos: W.Pos, uv: Textures.TextureAtlas.Uv, c: Colour, size: @Vector(2, f32), layer: u8) void {
-    const x = @as(f32, @floatFromInt(pos[0]));
-    const y = @as(f32, @floatFromInt(pos[1]));
-    // Changing coordinate systems: 
+fn drawOneQuad(logicPos: W.Pos, uv: Textures.TextureAtlas.Uv, c: Colour, size: PosF, layer: u8) void {
+    const x = @as(f32, @floatFromInt(logicPos[0]));
+    const y = @as(f32, @floatFromInt(logicPos[1]));
+    // Changing coordinate systems:logicPos
     // - right/bottom are offset 1 (logic) unit to the next grid cell. 
     // - size is scaled because its a percent of the screen the quad should take up but we want in range (-1, 1).
     // - final result is offset 1 (device) unit to move origin from center to top left. 
@@ -340,22 +378,11 @@ fn drawOneQuad(pos: W.Pos, uv: Textures.TextureAtlas.Uv, c: Colour, size: @Vecto
     sgl.v3fT2fC3b(left, top, z, uv.left, uv.top, c.r, c.g, c.b);
 }
 
-
-// TODO: one func used by ^ that lets you give start and stop pos in logic space. 
 fn drawBackground(c: Colour, size: @Vector(2, f32), worldSize: W.Pos) void {
-    const w = @as(f32, @floatFromInt(worldSize[0]));
-    const h = @as(f32, @floatFromInt(worldSize[1]));
-    const left = -1.0;
-    const right = (w * (size[0] * 2.0)) - 1;
-    const top = 1.0;
-    const bottom = (-h * (size[1] * 2.0)) + 1;
-    
-    // Center is (0, 0). Screen is 2x2. Top left is (-1, 1). Those are affected by the scale.
-    const z = 1.0;  // put this at the back so its behind all layers. 
-    sgl.v3fC4b(left, bottom, z, c.r, c.g, c.b, c.a);
-    sgl.v3fC4b(right, bottom, z,c.r, c.g, c.b, c.a);
-    sgl.v3fC4b(right, top, z, c.r, c.g, c.b, c.a);
-    sgl.v3fC4b(left, top, z, c.r, c.g, c.b, c.a);
+    // TODO: is there a way to cast vectors? 
+    const w = @as(f32, @floatFromInt(worldSize[0])) * size[0];
+    const h = @as(f32, @floatFromInt(worldSize[1])) * size[1];
+    drawOneQuad(.{ 0, 0 }, Textures.TextureAtlas.Blank, c, .{ w, h }, 0);
 }
 
 

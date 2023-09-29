@@ -107,12 +107,12 @@ pub const Level = struct {
         if (self.rulesDirty) {
             self.updateRules();
             self.rulesDirty = false;
-            self.rules.debugPrint();
         }
         // TODO: X is MOVE
         // TODO: this gets called when you move or wait
     }
 
+    // TODO: first level is broken with wall is you. also you should be able to compress yourself to make spider baba. 
     pub fn movePlayer(self: *Level, dir: Pos) void {
         if (!self.rules.exists(.You)) {
             return;
