@@ -164,6 +164,7 @@ pub const Level = struct {
         }
         
         self.checkSink();
+        self.checkTele() catch unreachable;
         // TODO: X is MOVE
         // TODO: this gets called when you move or wait
     }
@@ -184,6 +185,43 @@ pub const Level = struct {
                 else => {}
             }
         }
+    }
+
+    fn checkTele(self: *Level) !void {
+        const allTele = self.allOfState(.Tele);
+        if (allTele.len < 2) {
+            return;
+        }
+
+        // TODO: this sucks.
+        var changes = std.ArrayList(struct { e: *Entity, p: Pos}).init(TEMP);
+
+        for (allTele) |tele| {
+            std.debug.print("tele at {}\n", .{tele});
+            for (self.getEntity(tele.pos)) |overlap| {
+                if (tele == overlap) {
+                    continue;
+                }
+                const target = randOther(allTele, tele);
+                try changes.append(.{ .e=overlap, .p=target.pos});
+            }
+        }
+
+        for (changes.items) |move| {
+            std.debug.print("move {}\n", .{ move});
+            move.e.pos = move.p;
+            self.somethingChanged = true;
+        }
+    }
+
+    var rng = std.rand.DefaultPrng.init(0);
+    fn randOther(choices: []*Entity, me: *Entity) *Entity {
+        std.debug.assert(choices.len >= 2);
+        var c = rng.next() % choices.len;
+        while (choices[c] == me) {
+            c = rng.next() % choices.len;
+        }
+        return choices[c];
     }
 
     
@@ -508,7 +546,9 @@ pub const State = enum {
     Stop,
     Win,
     Defeat,
-    Sink
+    Sink,
+    Tele,
+
 };
 
 pub const Connect = enum {

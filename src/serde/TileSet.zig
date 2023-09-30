@@ -170,7 +170,9 @@ fn add(self: *TileSet, object: Object) !void {
 pub fn getBlock(self: TileSet, x: usize, y: usize) ?W.Block {
     const empty = x == 255 and y == 255;
     const edge = x == 0 and y == 0;
-    std.debug.assert(!empty and !edge);
+    if (empty or edge) {
+        return null;
+    }
     const index = (y * SIZE) + x;
     if (index >= self.existingPos.capacity() or !self.existingPos.isSet(index)) {
         logErr("Failed to read tile ({}, {})", .{ x, y });
