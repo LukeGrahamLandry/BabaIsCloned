@@ -1,3 +1,5 @@
+/// Handles creating a texture atlas and loading colour pallettes. 
+
 const std = @import("std");
 const W = @import("world.zig");
 const Img = @import("zigimg");
@@ -17,6 +19,7 @@ const AtlasResult = struct {
 // Caller owns the returned TextureAtlas.
 pub fn loadOfficialTextures(tiles: TileSet, texturesFolder: []const u8, alloc: std.mem.Allocator) !AtlasResult {
     var self: AtlasResult = .{ .atlas= try TextureAtlas.init(alloc) };
+    self.map.put(.{ .Object=._Invalid}, TextureAtlas.Blank);
     var blockIter = tiles.existingPos.iterator(.{});
     while (blockIter.next()) |i| {
         const data = tiles.posToData[i];
@@ -36,10 +39,11 @@ pub fn loadOfficialTextures(tiles: TileSet, texturesFolder: []const u8, alloc: s
 /// Obvious motivation for this is sgl's simple interface doesn't seem to allow switching textures part way through.
 /// As a bonus, its faster to just give one texture to the gpu, instead of switching it with many draw calls. 
 pub const TextureAtlas = struct {
+    alloc: std.mem.Allocator,
     pixels: []u32,
-    x: usize = 16,
+    x: usize = 3,
     y: usize = 0,
-    rowHeight: usize = 16,
+    rowHeight: usize = 3,
 
     const SIZE = 256;  // TODO: this will need to grow as i can parse more. should dynamiclly resize. 
     const SIZEF = @as(f32, SIZE);
@@ -50,6 +54,7 @@ pub const TextureAtlas = struct {
         right: f32 = 1.0,
     };
 
+    // Rendering the whole reserved square made the edges fuzzy. 
     pub const Blank: Uv = .{
         .top = 1.0 / SIZEF,
         .left = 1.0 / SIZEF,
@@ -57,13 +62,14 @@ pub const TextureAtlas = struct {
         .bottom = 2.0 / SIZEF,
     };
     
-    pub fn init(aalloc: std.mem.Allocator) !TextureAtlas {
-        var self: @This() = .{ .pixels= try aalloc.alloc(u32, SIZE*SIZE) };
+    pub fn init(alloc: std.mem.Allocator) !TextureAtlas {
+        var self: @This() = .{ .pixels= try alloc.alloc(u32, SIZE*SIZE), .alloc=alloc };
+        
         // TODO: should ahave an all white slot for drawing the background. 
         for (0..SIZE*SIZE) |i| {  // TODO: remove? 
             self.pixels[i] = 0;  // TODO: if not 0, you can see a little bit of edge around the guy. suggests I need some padding regardless if I cant trust my uv calculations to have no error. is it just from floats? 
         }
-       // TODO: this is awquard. dont like hardcoding the starts to +16. should be able to call add with this data. 
+       // TODO: this is awquard. dont like hardcoding the starts to +3. should be able to call add with this data. 
         for (0..3) |x| {
             for (0..3) |y| {
                 const i = y * SIZE + x;
@@ -122,13 +128,15 @@ pub const TextureAtlas = struct {
         return uv;
     }
 
+    /// This deinits this atlas object. 
     pub fn bake(self: TextureAtlas) sg.Image {
         var desc: sg.ImageDesc = .{
             .width = SIZE,
             .height = SIZE,
         };
         desc.data.subimage[0][0] = sg.asRange(self.pixels);
-        // TODO: does makeImage copy the data? can i free it now?
+        // Sokol makes a copy of the data so it's safe to drop now. 
+        defer self.alloc.free(self.pixels);
         return sg.makeImage(desc);
     }
     

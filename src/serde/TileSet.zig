@@ -111,7 +111,7 @@ const Data = struct {
     sprite: []const u8
 };
 
-const BlockData = struct {
+pub const BlockData = struct {
     layer: u8,
     colour: TilePos
 };
@@ -146,16 +146,16 @@ fn add(self: *TileSet, object: Object) !void {
     self.attempts += 1;
 
     // TODO: don't allow loading the same type of block twice? 
-    // TODO: default is allowed but required to be mutated by .ld file before use. 
+    // TODO: "default" is allowed but required to be mutated by .ld file before use. 
     const block = strToBlock(object.name.?) orelse {
-        logErr("Failed to parse block type '{s}'", .{ object.name.? });
+        logErr("Failed to parse block type '{s}' at {}", .{ object.name.?, object.tile });
         // TODO: this should be a hard error once I can parse everything. 
         return;
     };
 
     self.existingPos.set(index);
     self.existingId.set(object.id);
-    // TODO: sprite exists as a seperate field. do they every actually change it?
+    // TODO: sprite exists as a seperate field. lava uses the water sprite. 
     self.posToData[index] = .{ .id=object.id, .block=block, .layer=object.layer, .sprite=object.name.?, .colour=object.colour };
     self.idToPos[object.id] = index;
     if (self.blockToLayer.contains(block)) {
@@ -167,17 +167,14 @@ fn add(self: *TileSet, object: Object) !void {
     });
 }
 
-// TODO: report empty/edge seperatly from missing tile? maybe return a special one for failed that can still be rendered so its easy to see when a level is broken.  
 pub fn getBlock(self: TileSet, x: usize, y: usize) ?W.Block {
     const empty = x == 255 and y == 255;
     const edge = x == 0 and y == 0;
-    if (empty or edge) {
-        return null;
-    }
+    std.debug.assert(!empty and !edge);
     const index = (y * SIZE) + x;
     if (index >= self.existingPos.capacity() or !self.existingPos.isSet(index)) {
         logErr("Failed to read tile ({}, {})", .{ x, y });
-        return null;
+        return .{ .Object=._Invalid };
     }
     return self.posToData[index].block;
 }
@@ -185,6 +182,17 @@ pub fn getBlock(self: TileSet, x: usize, y: usize) ?W.Block {
 
 pub fn BlockMap(comptime V: type) type {
     // TODO: clever comptime introspection instead of hard-coding it. 
+    // inline for(std.meta.Fields(Val)) |f| {
+    //   if(f.field_type == T) {
+    //        return @field(val, f.name);
+    //    }
+    // }
+    // const Tag = @typeInfo(Val).Union.tag_type.?;
+
+    // fn fieldType(comptime kind: Tag) type {
+    //     return fields(Val)[@enumToInt(kind)].field_type;
+    // }
+    // std.enums.EnumFieldStruct(comptime E: type, comptime Data: type, comptime field_default: ?Data)
     return struct {
         noun: std.EnumMap(W.Noun, V) = .{},
         object: std.EnumMap(W.Noun, V) = .{},

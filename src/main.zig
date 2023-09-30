@@ -10,7 +10,6 @@ const math = @import("std").math;
 const sdtx = sokol.debugtext;
 const save = @import("serde/save.zig");
 const official = @import("serde/official.zig");
-const Img = @import("zigimg");
 const Textures = @import("textures.zig");
 const Test = @import("tests.zig");
 
@@ -27,11 +26,13 @@ const state = struct {
     var atlas: sg.Image = undefined;
     var blockTextures: Textures.UvMap = .{};
     var pallet: Textures.ColourSet = .{};
-    // TODO: put these in thier own struct. 
+    // TODO: put these in thier own struct. alloc all into same new arena? 
     var tests: ?[]Test.TestCase = null;  // TODO: dont love this. seperate the rendering from the thing that drives actions somehow? 
     var testIndex: usize = 0;
     var actionIndex: usize = 0;
     var frames: usize = 0;
+    var passed: usize = 0;
+    var failed: usize = 0;
 };
 
 const alloc = std.heap.c_allocator;
@@ -43,7 +44,7 @@ export fn init() void {
         state.level = loadSavedLevel(SAVE_FILE) catch defaultLevel() catch @panic("OOM");
         state.initialLevel = state.level.clone(alloc) catch @panic("OOM");
     };
-   
+    
     // TODO: could set the limits much lower than defaults if i wanted to be obsessive about using tiny memory. 
     sg.setup(.{
         .context = sgapp.context(),
@@ -86,7 +87,7 @@ export fn init() void {
 
     const texturesFolder = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Sprites";
     const tiles = official.tileSet.?;  // TODO: try load it then orelse. 
-    const atlas = Textures.loadOfficialTextures(tiles, texturesFolder, alloc) catch @panic("failed to load textures");
+    const atlas = Textures.loadOfficialTextures(tiles, texturesFolder, W.TEMP) catch @panic("failed to load textures");
     state.atlas = atlas.atlas.bake();
     state.blockTextures = atlas.map;
     
@@ -97,6 +98,8 @@ export fn init() void {
         .min_filter = .LINEAR,
         .mag_filter = .LINEAR,
     });
+
+    _ = W.frameArena.reset(.retain_capacity);
 }
 
 export fn evnt(event: [*c]const sapp.Event) void {
@@ -131,22 +134,24 @@ fn handle_event(event: sapp.Event) !void {
                 .LEFT => {
                     if (state.levelIndex > 0) {
                         state.levelIndex -= 1;
-                        reloadLevel(state.levelIndex, true) catch {
-                            std.debug.print("Failed to load level {}\n", .{state.levelIndex});
+                        reloadLevel(state.levelIndex, true) catch |err| {
+                            std.debug.print("Failed to load level {} {}\n", .{state.levelIndex, err});
                         };
                     }
                 },
                 .RIGHT => {
                     state.levelIndex += 1;
                     // TODO: split into two functions. one that does stuff with the state and wraps a pure one in official.zig 
-                    reloadLevel(state.levelIndex, true) catch {
-                        std.debug.print("Failed to load level {}\n", .{state.levelIndex});
+                    reloadLevel(state.levelIndex, true) catch |err| {
+                        std.debug.print("Failed to load level {} {}\n", .{state.levelIndex, err});
                     };
                 },
                 .T => {
                     try @import("tests.zig").saveTestRoute(state.levelIndex, state.level);
                 },
                 .P => {
+                    // TODO: need a way to change speed or pause and move back and forth manually or to specific level
+                    //       does it need to be a real gui instead of rememebering keyboard shortcuts? 
                     if (state.tests) |t| {
                         for (t) |*tt| {
                             tt.deinit();
@@ -157,7 +162,10 @@ fn handle_event(event: sapp.Event) !void {
                     state.actionIndex = 0;
                     state.level.deinit();
                     state.level = try state.tests.?[0].level.clone(alloc);
+                    state.passed = 0;
+                    state.failed = 0;
                     std.debug.print("start playing tests\n", .{});
+                    // TODO: while testing, eat all inputs and allow p to exit. 
                 },
                 else => {}
             }
@@ -226,8 +234,9 @@ fn calcSizes(levelSize: W.Pos) Sizes {
 export fn frame() void {
     const s = calcSizes(state.level.size);
 
+    // TODO: system for logging temp messages on screen. 
     if (state.tests) |tests| {
-        if (state.frames % 1 == 0) {
+        if (state.frames % 5 == 0) {
             if (state.testIndex >= tests.len) {
                 std.debug.print("done playing tests\n", .{});
                 for (tests) |*tt| {
@@ -238,6 +247,12 @@ export fn frame() void {
             } else {
                 const t = &tests[state.testIndex];
                 if (state.actionIndex >= t.actions.len) {
+                    if (state.level.state != t.endState) {
+                        std.debug.print("FAIL test {}\n", .{ state.testIndex });
+                        state.failed += 1;
+                    } else {
+                        state.passed += 1;
+                    }
                     state.actionIndex = 0;
                     state.testIndex += 1;
                     if (state.testIndex < tests.len) {  // TODO: ughghhghg
@@ -273,6 +288,32 @@ export fn frame() void {
         .None => {},
     }
 
+    // TODO: auto line wrapping. 
+    if (state.tests) |t| {
+        sdtx.color3b(0, 255, 0);
+        sdtx.canvas(sapp.widthf(), sapp.heightf());
+        sdtx.pos(1, 1);
+        if (state.failed == 0) {
+            sdtx.print("Passing {}/{}", .{ state.passed, t.len });
+        } else {
+            sdtx.print("Failed {}. Passed {}/{}.", .{ state.failed, state.passed, t.len });
+        }
+        sdtx.pos(1, 2);
+        if (state.testIndex < t.len) {
+            const str = t[state.testIndex].text;
+            const moveCount = t[state.testIndex].actions.len;
+            const moveChar = str.len - moveCount + state.actionIndex;
+            sdtx.color3b(0, 150, 0);
+            sdtx.print("{s}", .{ str[0..moveChar] });
+            if (moveChar < str.len) {
+                sdtx.color3b(255, 255, 255);
+                sdtx.print("{c}", .{ str[moveChar] });
+                sdtx.color3b(0, 150, 0);
+                sdtx.print("{s}", .{ str[moveChar+1..] });
+            }
+        }
+    }
+
     sgl.end();
     sg.beginDefaultPass(state.pass_action, sapp.width(), sapp.height());
     sgl.draw();
@@ -285,14 +326,14 @@ export fn frame() void {
 }
 
 fn renderOfficial(quadNorm: PosF) void {
+    const invalidInfo: official.TileSet.BlockData = .{ .layer=20, .colour=.{ 4, 1 }};
     for (state.level.entities.items) |e| {
         // TODO: more elegant coping with not having loaded the tileSet. validate everything up front and swap to other renderer if needed. 
-        const info = official.tileSet.?.blockToLayer.get(e.block).?;
+        const info = official.tileSet.?.blockToLayer.get(e.block) orelse invalidInfo;
 
-        if (state.blockTextures.get(e.block)) |uv| {
-            const c: Colour = state.pallet.get(info.colour[0], info.colour[1]);
-            drawOneQuad(e.pos, uv, c, quadNorm, info.layer);
-        }
+        const uv = state.blockTextures.get(e.block) orelse Textures.TextureAtlas.Blank;
+        const c: Colour = state.pallet.get(info.colour[0], info.colour[1]);
+        drawOneQuad(e.pos, uv, c, quadNorm, info.layer);
     }
 }
 

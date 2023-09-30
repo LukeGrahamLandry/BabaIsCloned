@@ -6,6 +6,7 @@ const expectEq = std.testing.expectEqual;
 //       feels less elegant and dont want to commit such a direct derivitive of the real game's data.
 //       hash of it? but then you can't see the problem. 
 //       currently seems like a lot could go wrong and still have the test pass. 
+// TODO: runlength encoding
 const testRoutesPath = "tests.txt";
 pub fn saveTestRoute(levelId: usize, level: W.Level) !void {
     var file = try std.fs.cwd().openFile(testRoutesPath, .{ .mode=.read_only });
@@ -20,6 +21,7 @@ pub fn saveTestRoute(levelId: usize, level: W.Level) !void {
 
     try out.print("baba/{} {s} ", .{ levelId, @tagName(level.state) });
     for (level.actionHistory.items) |a| {
+        // TODO: array lookup is less annoying. or just use these bytes as the repr for the enum?
         const c = @as(u8, switch (a) {
             .Left => '<',
             .Right => '>',
@@ -41,6 +43,7 @@ pub const TestCase = struct {
     actions: []const W.Input,
     level: W.Level,
     endState: W.GameState,
+    text: []const u8,
 
     pub fn deinit(self: *TestCase) void {
         // TODO
@@ -54,7 +57,7 @@ pub fn loadTests() ![]TestCase {
     var file = try std.fs.cwd().openFile(testRoutesPath, .{});
     defer file.close();
     var tests = std.ArrayList(TestCase).init(std.heap.c_allocator);
-    const data = try file.readToEndAlloc(W.TEMP, std.math.maxInt(u16));
+    const data = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(u16));
     const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/{s}level.l";
         
     var lines = std.mem.splitScalar(u8, data, '\n');
@@ -62,7 +65,6 @@ pub fn loadTests() ![]TestCase {
         if (line.len == 0){
             continue;
         }
-        std.debug.print("LOAD: {s}\n", .{ line });
         var parts = std.mem.splitScalar(u8, line, ' ');
         const fileName = parts.next().?;
         const path = try std.fmt.allocPrint(W.TEMP, template, .{fileName});
@@ -85,6 +87,7 @@ pub fn loadTests() ![]TestCase {
             .actions = try actions.toOwnedSlice(),
             .endState = endState,
             .level = level,
+            .text = line
         });
     }
 
@@ -93,15 +96,18 @@ pub fn loadTests() ![]TestCase {
 
 test "run tests.txt" {
     var cases = try loadTests();
+    var failed = false;
     for (cases, 0..) |*tCase, i| {
         for (tCase.actions) |a| {
             try tCase.level.handleInput(a);
         }
         if (tCase.endState != tCase.level.state) {
-            std.debug.print("*Case {} Expected {s} but got {s}.\n", .{ i, @tagName(tCase.endState), @tagName(tCase.level.state) });
-            return error.TestExpectedEqual;
+            std.debug.print("\n*Case {} Expected {s} but got {s}.", .{ i, @tagName(tCase.endState), @tagName(tCase.level.state) });
+            failed = true;  // Want to run all tests even if one fails. 
         }
-
+    }
+    if (failed) {
+        return error.TestExpectedEqual;
     }
     // TODO: leaks it
 }

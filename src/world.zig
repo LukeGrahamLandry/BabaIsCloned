@@ -70,6 +70,60 @@ pub const Level = struct {
             }
         }   
     }
+
+    pub fn checkSink(self: *Level) void {
+        if (!self.rules.exists(.Sink)) {
+            return;
+        }
+
+        // TODO: this is much to fragile
+        var i = self.entities.items.len - 1;
+        while (i > 0) {
+            i -= 1;
+            const e = self.entities.items[i];
+            switch (e.block) {
+                .Object => |noun| {
+                    if (self.rules.is(noun, .Sink)) {
+                        for (self.getEntity(e.pos)) |ee| {
+                            if (self.rules.isSink(ee.*)) {
+                                continue;
+                            }
+                            const base = @intFromPtr(self.entities.items.ptr);
+                            const index = (@intFromPtr(ee) - base) / @sizeOf(Entity);
+
+                            std.debug.assert(index != i and index < self.entities.items.len);
+                            _ = self.entities.swapRemove(i);
+                            if (index == self.entities.items.len) {
+                                // was last thing in the list so swap remove i would have brought it in. 
+                                std.debug.assert(std.meta.eql(ee.*, self.entities.items[i]));
+                                _ = self.entities.swapRemove(i);
+                            } else {
+                                if (index > i) {
+                                    // Already looked at [index], so just remove it. 
+                                    _ = self.entities.swapRemove(index);
+                                } else {
+                                    if (i == 0) {
+                                        // this was the last thing to look at. safe to just remove 
+                                        _ = self.entities.swapRemove(index);
+                                    } else {
+                                        // [index] hasn't been iterated yet but we want to remove.
+                                        // swap it with the next thing to be iterated. then swap remove it from that slot. 
+                                        self.entities.items[index] = self.entities.items[i - 1];
+                                        _ = self.entities.swapRemove(i - 1);
+                                        i -= 1;
+                                    }
+                                }
+                            }
+                            
+                            self.somethingChanged = true;
+                            break;
+                        }
+                    }
+                },
+                else => {}
+            }
+        }   
+    }
     
     pub fn levelWon(self: *Level) bool {
         for (self.allOfState(.Win)) |win| {
@@ -108,6 +162,8 @@ pub const Level = struct {
             self.updateRules();
             self.rulesDirty = false;
         }
+        
+        self.checkSink();
         // TODO: X is MOVE
         // TODO: this gets called when you move or wait
     }
@@ -130,6 +186,7 @@ pub const Level = struct {
         }
     }
 
+    
     pub fn resolveMove(self: *Level, e: *Entity, dir: Pos) bool {
         if (self.offBoard(e.pos + dir)) {
             return false;
@@ -137,8 +194,10 @@ pub const Level = struct {
 
         const blockers = self.getEntity(e.pos + dir);
         if (blockers.len > 0) {
+            // TODO: it double moves if you are push and two of you adjacent. (X is you; X is push)  XX__ -> _X_X but want _XX_
+            //       and worse its order dependent. need to move everything before start pushing? 
             for (blockers) |other| {
-                // You can push things that are stop. But otherwise, bail out. 
+                // Push overrides stop but otherwise, bail out. 
                 if (self.rules.isStop(other.*) and !self.rules.playerCanPush(other.*)) {
                     return false;
                 }
@@ -321,7 +380,7 @@ pub const Rules = struct {
 
     pub fn playerCanPush(self: Rules, e: Entity) bool {
         return switch (e.block) {
-            .Object => |noun| self.is(noun, .Push) or self.is(noun, .You),
+            .Object => |noun| self.is(noun, .Push),
             else => true,
         };
     }
@@ -333,6 +392,15 @@ pub const Rules = struct {
             else => false,
         };
     }
+
+    pub fn isSink(self: Rules, e: Entity) bool {
+        return switch (e.block) {
+            .Object => |noun| self.is(noun, .Sink),
+            else => false,
+        };
+    }
+
+    
 
     pub fn clear(self: *Rules) void {
         inline for (comptime std.enums.values(Noun)) |noun| {
@@ -385,7 +453,6 @@ pub const Block = union(BlockType) {
         return self != @field(Block, "Object");
     }
 
-
     pub fn name(self: Block) []const u8 {
         return switch (self) {
             .Noun => |noun| @tagName(noun),
@@ -411,11 +478,28 @@ pub const Noun = enum {
     Flag,
     Skull,
     Water,
-
-    // TODO: I need layered rendering so this doesnt suck
-    // Background things
     Tile,
     Grass,
+    Lava,
+    Cloud,
+    Door,
+    Key,
+    Star,
+    Pillar,
+    Fungus,
+    Rose,
+    Love,
+    Box,
+    Hedge,
+    Flower,
+    Fence,
+    Moon,
+    Orb,
+    Brick,
+    Ice,
+    Dust,
+    Keke,
+    _Invalid
 };
 
 pub const State = enum {
@@ -424,6 +508,7 @@ pub const State = enum {
     Stop,
     Win,
     Defeat,
+    Sink
 };
 
 pub const Connect = enum {
