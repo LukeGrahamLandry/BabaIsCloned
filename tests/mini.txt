@@ -1,0 +1,34 @@
+2
+PALLET
+1
+NOUNS
+b Baba
+r Rock
+f Flag
+i Ice
+w Wall
+s Water
+STATES
+0 You
+1 Push
+2 Stop
+3 Win
+4 Tele
+5 Sink
+
+TEST
+"push obj through tele to consume sink"
+1
+RULES
+Baba You, Rock Push, Ice Tele, Flag Win, Water Sink
+MAP
+----WF
+-IR-WS
+---BW-
+WWWWW-
+-I----
+------
+
+EXPECT
+Win ^<<<>=>>>v>^^^^^
+Lose <<^>>>>^^^

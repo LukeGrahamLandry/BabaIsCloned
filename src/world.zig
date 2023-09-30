@@ -10,16 +10,17 @@ pub var TEMP = frameArena.allocator();
 pub const Level = struct {
     entities: std.ArrayList(Entity),
     actionHistory: std.ArrayList(Input),  // TODO: include in save file. 
-    rules: Rules,
+    rules: Rules = Rules.init(),
     size: Pos,
     rulesDirty: bool = false,
     somethingChanged: bool = false,
     state: GameState = .None,
+    implicitRules: Rules = Rules.init(),
+
     pub fn init(alloc: std.mem.Allocator, size: Pos) Level {
         return .{
             .entities = std.ArrayList(Entity).init(alloc),
             .actionHistory = std.ArrayList(Input).init(alloc),
-            .rules = Rules.init(),
             .size = size,
         };
     }
@@ -197,7 +198,6 @@ pub const Level = struct {
         var changes = std.ArrayList(struct { e: *Entity, p: Pos}).init(TEMP);
 
         for (allTele) |tele| {
-            std.debug.print("tele at {}\n", .{tele});
             for (self.getEntity(tele.pos)) |overlap| {
                 if (tele == overlap) {
                     continue;
@@ -208,7 +208,9 @@ pub const Level = struct {
         }
 
         for (changes.items) |move| {
-            std.debug.print("move {}\n", .{ move});
+            if (move.e.block.isText()) {
+                self.rulesDirty = true;
+            }
             move.e.pos = move.p;
             self.somethingChanged = true;
         }
@@ -263,7 +265,7 @@ pub const Level = struct {
     // Also does noun replacements. // TODO: that's a special type of transaction. 
     // TOOD: needs to be deterministic over entity order. update a new rules struct and then swap at the end. and then do all noun swaps. tick somewhere in there. test correct order  
     pub fn updateRules(self: *Level) void {
-        self.rules.clear();
+        self.rules = self.implicitRules;
         for (self.entities.items) |e| {
             switch (e.block) {
                 .Connect => |word| {

@@ -1,7 +1,8 @@
 const std = @import("std");
 const W = @import("../world.zig");
+const tests = @import("../tests.zig");
 const str = std.ArrayList(u8);
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 // TODO: this format doesnt work because multiple dudes are allowed in one square. 
 // TODO: split pallet so tests dont have to repeat it many times 
@@ -55,7 +56,7 @@ pub fn saveLevel(self: W.Level, alloc: std.mem.Allocator) ![] const u8 {
     while (iter2.next()) |e| {
         try writer.print("{c} {s}\n", .{ e.value.*, @tagName(e.key) });
     }
-    try writer.print("MAP\n", .{});
+    try writer.print("\nMAP\n", .{});
     try header.appendSlice(body.items);
 
     body.deinit();
@@ -64,48 +65,45 @@ pub fn saveLevel(self: W.Level, alloc: std.mem.Allocator) ![] const u8 {
 
 
 const ParseErr = error.LevelParseFailed;
+const Iter = std.mem.SplitIterator(u8, .scalar);
+const TilePallet = struct {
+    nouns: [255]?W.Noun = [_] ?W.Noun { null } ** 255,
+    states: [255]?W.State = [_] ?W.State { null } ** 255,
 
-// TODO: combine the header stuff into a pallet so tests can share
-pub fn loadLevel(data: [] const u8, alloc: std.mem.Allocator) !W.Level {
-    var self = W.Level.init(alloc, .{ 0, 0 });
-    var lines = std.mem.splitScalar(u8, data, '\n');
+    fn parse(lines: *Iter) !TilePallet {
+        var self: TilePallet = .{};
 
-    const verStr = lines.next() orelse return ParseErr;
-    const version = std.fmt.parseInt(u32, verStr, 10) catch return ParseErr;
-    if (version != VERSION) {
-        return ParseErr;
-    }
+        const valid = std.mem.eql(u8, lines.next() orelse return ParseErr, "NOUNS");
+        if (!valid) {
+            return ParseErr;
+        }
+        while (lines.next()) |line| {
+            if (std.mem.eql(u8, line, "STATES")) {
+                break;
+            }
 
-    const valid = std.mem.eql(u8, lines.next() orelse return ParseErr, "NOUNS");
-    if (!valid) {
-        return ParseErr;
-    }
-
-    var nouns = [_] ?W.Noun { null } ** 255;
-    var states = [_] ?W.State { null } ** 255;
-
-    while (lines.next()) |line| {
-        if (std.mem.eql(u8, line, "STATES")) {
-            break;
+            const c = line[0];
+            const name = line[2..];
+            const value = enumFromTagName(W.Noun, name) orelse return ParseErr;
+            self.nouns[@intCast(c)] = value;
         }
 
-        const c = line[0];
-        const name = line[2..];
-        const value = enumFromTagName(W.Noun, name) orelse return ParseErr;
-        nouns[@intCast(c)] = value;
-    }
+        while (lines.next()) |line| {
+            if (line.len == 0) {
+                break;
+            }
 
-    while (lines.next()) |line| {
-        if (std.mem.eql(u8, line, "MAP")) {
-            break;
+            const c = line[0];
+            const name = line[2..];
+            const value = enumFromTagName(W.State, name) orelse return ParseErr;
+            self.states[@intCast(c)] = value;
         }
-
-        const c = line[0];
-        const name = line[2..];
-        const value = enumFromTagName(W.State, name) orelse return ParseErr;
-        states[@intCast(c)] = value;
+        
+        return self;
     }
+};
 
+fn readLevelMap(self: *W.Level, lines: *Iter, pallet: TilePallet) !void {
     var pos: W.Pos = .{ 0, 0 };
     while (lines.next()) |line| {
         if (line.len == 0) {
@@ -123,12 +121,12 @@ pub fn loadLevel(data: [] const u8, alloc: std.mem.Allocator) !W.Level {
 
             if (std.ascii.isUpper(c)) {
                 const index = std.ascii.toLower(c);
-                const noun = nouns[index] orelse return ParseErr;
+                const noun = pallet.nouns[index] orelse return ParseErr;
                 try self.addEntity(pos, .{ .Object=noun });
             } else {
-                if (nouns[c]) |noun| {
+                if (pallet.nouns[c]) |noun| {
                     try self.addEntity(pos, .{ .Noun=noun });
-                } else if (states[c]) |state| {
+                } else if (pallet.states[c]) |state| {
                     try self.addEntity(pos, .{ .State=state });
                 } else if (c == '=') {
                     try self.addEntity(pos, .{ .Connect=.Is});
@@ -143,8 +141,90 @@ pub fn loadLevel(data: [] const u8, alloc: std.mem.Allocator) !W.Level {
 
     self.size = pos;
     self.updateRules();
-    return self;
+} 
+
+pub fn loadLevel(data: [] const u8, alloc: std.mem.Allocator) !W.Level {
+    var self = W.Level.init(alloc, .{ 0, 0 });
+    var lines = std.mem.splitScalar(u8, data, '\n');
+    try requireCurrentVersion(&lines);
     
+    const pallet = try TilePallet.parse(&lines);
+    try requireNext(&lines, "MAP");
+    try readLevelMap(&self, &lines, pallet);
+    return self;
+}
+
+// TODO: unify the two formats of tests. official levels can have one line that says which level then all tests for that level together 
+pub fn loadTestLevels(data: [] const u8, alloc: std.mem.Allocator) ![]tests.TestCase {
+    var lines = std.mem.splitScalar(u8, data, '\n');
+    try requireCurrentVersion(&lines);
+    
+    try requireNext(&lines, "PALLET");
+    _ = try readInt(&lines);
+    const pallet = try TilePallet.parse(&lines);
+
+    var cases = std.ArrayList(tests.TestCase).init(alloc);
+
+    // TODO: loop and load multiple. 
+    var level = W.Level.init(alloc, .{ 0, 0 });    
+    try requireNext(&lines, "TEST");
+    const name = lines.next() orelse return ParseErr;
+    _ = name;
+    _ = try readInt(&lines);
+
+    try requireNext(&lines, "RULES");
+    level.implicitRules = try readDefaultRules(lines.next().?);
+    try requireNext(&lines, "MAP");
+    try readLevelMap(&level, &lines, pallet);
+
+    try requireNext(&lines, "EXPECT");
+    while (lines.next()) |line| {
+        if (line.len == 0) {
+            break;
+        }
+        var parts = std.mem.splitScalar(u8, line, ' ');
+        const endState = std.meta.stringToEnum(W.GameState, parts.next().?).?;
+        const actions = try tests.readActionList(parts.next().?);
+
+        try cases.append(.{ .actions=actions, .level=try level.clone(alloc), .endState=endState, .text=line });
+    }
+    level.deinit();
+
+    return cases.toOwnedSlice();
+}
+
+fn readDefaultRules(data: []const u8) !W.Rules {
+    var self = W.Rules.init();
+    var entries = std.mem.splitSequence(u8, data, ", ");
+    while (entries.next()) |entry| {
+        var parts = std.mem.splitScalar(u8, entry, ' ');
+        const ns = parts.next() orelse return ParseErr;
+        const ss = parts.next() orelse return ParseErr;
+        const noun = std.meta.stringToEnum(W.Noun, ns) orelse return ParseErr;
+        const state = std.meta.stringToEnum(W.State, ss) orelse return ParseErr;
+        self.set(noun, state);
+    }
+    return self;
+}
+
+fn readInt(lines: *Iter) !usize {
+    const intStr = lines.next() orelse return ParseErr;
+    return std.fmt.parseInt(u32, intStr, 10) catch return ParseErr;
+}
+
+fn requireCurrentVersion(lines: *Iter) !void {
+    if (try readInt(lines) != VERSION) {
+        return ParseErr;
+    }
+}
+
+fn requireNext(lines: *Iter, marker: []const u8) !void {
+    const found = lines.next() orelse return ParseErr;
+    const valid = std.mem.eql(u8, found, marker);
+    if (!valid) {
+        std.debug.print("Expected '{s}' but found '{s}'\n", .{ marker, found, });
+        return ParseErr;
+    }
 }
 
 // TODO: error if too many types in one pallet 

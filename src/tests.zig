@@ -7,7 +7,7 @@ const expectEq = std.testing.expectEqual;
 //       hash of it? but then you can't see the problem. 
 //       currently seems like a lot could go wrong and still have the test pass. 
 // TODO: runlength encoding
-const testRoutesPath = "tests.txt";
+const testRoutesPath = "tests/levels.txt";
 pub fn saveTestRoute(levelId: usize, level: W.Level) !void {
     var file = try std.fs.cwd().openFile(testRoutesPath, .{ .mode=.read_only });
     var testCase = std.ArrayList(u8).init(std.heap.c_allocator);
@@ -71,30 +71,36 @@ pub fn loadTests() ![]TestCase {
         var level = try @import("serde/official.zig").loadLevel(std.heap.c_allocator, path); 
         const endState = std.meta.stringToEnum(W.GameState, parts.next().?).?;
         const actionStr = parts.next().?;
-        var actions = std.ArrayList(W.Input).init(std.heap.c_allocator);
-        for (actionStr) |c| {
-            const a: W.Input = switch (c) {
-                '<' => .Left,
-                '>' => .Right,
-                '^' => .Up,
-                'v' => .Down,
-                '=' => .Wait,
-                else => std.debug.panic("Unexpected action char: '{}'", .{c}),
-            };
-            try actions.append(a);
-        }
         try tests.append(.{
-            .actions = try actions.toOwnedSlice(),
+            .actions = try readActionList(actionStr),
             .endState = endState,
             .level = level,
             .text = line
         });
     }
 
+    try tests.appendSlice(try loadMiniTests());  // TODO: leak
+
     return try tests.toOwnedSlice();    
 }
 
-test "run tests.txt" {
+pub fn readActionList(actionStr: []const u8) ![]W.Input {
+    var actions = std.ArrayList(W.Input).init(std.heap.c_allocator);
+    for (actionStr) |c| {
+        const a: W.Input = switch (c) {
+            '<' => .Left,
+            '>' => .Right,
+            '^' => .Up,
+            'v' => .Down,
+            '=' => .Wait,
+            else => std.debug.panic("Unexpected action char: '{}'", .{c}),  // TODO: err?
+        };
+        try actions.append(a);
+    }
+    return try actions.toOwnedSlice();
+}
+
+test "replay" {
     var cases = try loadTests();
     var failed = false;
     for (cases, 0..) |*tCase, i| {
@@ -110,6 +116,14 @@ test "run tests.txt" {
         return error.TestExpectedEqual;
     }
     // TODO: leaks it
+    
+}
+
+fn loadMiniTests() ![]TestCase {
+    var file = try std.fs.cwd().openFile("tests/mini.txt", .{ .mode=.read_only });
+    defer file.close();
+    const data = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(u16));
+    return try @import("serde/save.zig").loadTestLevels(data, std.heap.c_allocator);
 }
 
 test "world repr sanity" {
@@ -214,4 +228,11 @@ fn expectOne(w: W.Level, pos: W.Pos, block: ?W.Block) !void {
 test "_" {
     _ = @import("serde/LuaLexer.zig");
     _ = @import("serde/TileSet.zig");
+}
+
+
+pub fn readAlloc(absPath: []const u8, alloc: std.mem.Allocator) ![]u8 {
+    const file = try std.fs.openFileAbsolute(absPath, .{});
+    defer file.close();
+    return try file.reader().readAllAlloc(alloc, std.math.maxInt(u32));
 }
