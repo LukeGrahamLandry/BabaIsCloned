@@ -216,6 +216,8 @@ pub const Level = struct {
         }
     }
 
+    // TODO: since this uses random, its not deterministic anymore so my undo doesnt work if multiple tele. 
+    //       need to always start from the same seed and reset when clearing the level. 
     var rng = std.rand.DefaultPrng.init(0);
     fn randOther(choices: []*Entity, me: *Entity) *Entity {
         std.debug.assert(choices.len >= 2);
@@ -398,6 +400,25 @@ pub const Level = struct {
         self.rules.debugPrint();
         std.debug.print("--- END ---\n", .{});
     }
+
+    // Returns an error if different entities. Order independent, just checks type & position. 
+    pub fn expectEql(self: Level, other: Level) !void {
+        if (self.entities.items.len != other.entities.items.len) {
+            return error.TestExpectedEqual;
+        }
+
+        var tempOther = try other.clone(TEMP);
+        for (self.entities.items) |entity| {
+            for (tempOther.entities.items, 0..) |check, i| {
+                if (std.meta.eql(entity, check)){
+                    _ = tempOther.entities.swapRemove(i);
+                    break;
+                }
+            } else {
+                return error.TestExpectedEqual;
+            }
+        }
+    }
 };
 
 pub const Rules = struct {
@@ -571,3 +592,26 @@ pub const GameState = enum {
     Win,
     Lose
 };
+
+pub fn defaultLevel() !Level {
+    var w = Level.init(std.heap.c_allocator, .{ 10, 10 });
+    try w.addEntity(.{ 1, 5 }, .{ .Noun = .Baba });
+    try w.addEntity(.{ 2, 5 }, .{ .Connect = .Is });
+    try w.addEntity(.{ 3, 5 }, .{ .State = .You });
+    try w.addEntity(.{ 2, 4 }, .{ .Noun = .Rock });
+    try w.addEntity(.{ 2, 6 }, .{ .State = .Push });
+    try w.addEntity(.{ 5, 0 }, .{ .Noun = .Wall });
+    try w.addEntity(.{ 6, 0 }, .{ .Connect = .Is });
+    try w.addEntity(.{ 7, 0 }, .{ .State = .Stop });
+    try w.addEntity(.{ 5, 2 }, .{ .Object = .Rock });
+    try w.addEntity(.{ 5, 1 }, .{ .Object = .Baba });
+    try w.addEntity(.{ 5, 8 }, .{ .Object = .Wall });
+    w.updateRules();
+    return w;
+}
+
+test "clone eql" {
+    const a = try defaultLevel();
+    const b = try a.clone(TEMP);
+    try a.expectEql(b);
+}

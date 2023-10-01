@@ -11,7 +11,8 @@ const sdtx = sokol.debugtext;
 const save = @import("serde/save.zig");
 const official = @import("serde/official.zig");
 const Textures = @import("textures.zig");
-const Test = @import("tests.zig");
+const TestIter = @import("serde/TestIter.zig");
+const logErr = std.log.scoped(.tilemap).debug;
 
 const SAVE_FOLDER = "zig-out";
 const SAVE_FILE = SAVE_FOLDER ++ "/save.baba";
@@ -26,13 +27,7 @@ const state = struct {
     var atlas: sg.Image = undefined;
     var blockTextures: Textures.UvMap = .{};
     var pallet: Textures.ColourSet = .{};
-    // TODO: put these in thier own struct. alloc all into same new arena? 
-    var tests: ?[]Test.TestCase = null;  // TODO: dont love this. seperate the rendering from the thing that drives actions somehow? 
-    var testIndex: usize = 0;
-    var actionIndex: usize = 0;
-    var frames: usize = 0;
-    var passed: usize = 0;
-    var failed: usize = 0;
+    var tests: ?TestIter = null;
 };
 
 const alloc = std.heap.c_allocator;
@@ -40,8 +35,8 @@ const alloc = std.heap.c_allocator;
 // TODO: wrap with zig calling convention func so i can use try. 
 export fn init() void {
     reloadLevel(0, false) catch |err| {
-        std.debug.print("parse failed! {}\n", .{err});
-        state.level = loadSavedLevel(SAVE_FILE) catch defaultLevel() catch @panic("OOM");
+        logErr("parse failed! {}\n", .{err});
+        state.level = loadSavedLevel(SAVE_FILE) catch W.defaultLevel() catch @panic("OOM");
         state.initialLevel = state.level.clone(alloc) catch @panic("OOM");
     };
     
@@ -107,73 +102,90 @@ export fn evnt(event: [*c]const sapp.Event) void {
 }
 
 fn handle_event(event: sapp.Event) !void {
-    switch (event.type) {
-        .KEY_DOWN => {
-            switch (event.key_code) {
-                .ESCAPE => sapp.requestQuit(),
-                .W => try state.level.handleInput(.Up),
-                .A => try state.level.handleInput(.Left),
-                .S => try state.level.handleInput(.Down),
-                .D => try state.level.handleInput(.Right),
-                .SPACE => try state.level.handleInput(.Wait),
-                .Z => {
-                    // TODO: hack.
-                    var hist = state.level.actionHistory.items;
-                    if (hist.len > 0) {
-                        var newLevel = try state.initialLevel.clone(alloc);
-                        for (hist[0..hist.len-1]) |in| {
-                            try newLevel.handleInput(in);
-                        }
-                        state.level.deinit();  // TODO: extra cringe that every undo reallocates. 
-                        state.level = newLevel;
-                    }
-                },
-                .R => {
-                    try state.level.copyFrom(state.initialLevel);
-                },
-                .LEFT => {
-                    if (state.levelIndex > 0) {
-                        state.levelIndex -= 1;
-                        reloadLevel(state.levelIndex, true) catch |err| {
-                            std.debug.print("Failed to load level {} {}\n", .{state.levelIndex, err});
-                        };
-                    }
-                },
-                .RIGHT => {
-                    state.levelIndex += 1;
-                    // TODO: split into two functions. one that does stuff with the state and wraps a pure one in official.zig 
-                    reloadLevel(state.levelIndex, true) catch |err| {
-                        std.debug.print("Failed to load level {} {}\n", .{state.levelIndex, err});
-                    };
-                },
-                .T => {
-                    try @import("tests.zig").saveTestRoute(state.levelIndex, state.level);
-                },
-                .P => {
-                    // TODO: need a way to change speed or pause and move back and forth manually or to specific level
-                    //       does it need to be a real gui instead of rememebering keyboard shortcuts? 
-                    if (state.tests) |t| {
-                        for (t) |*tt| {
-                            tt.deinit();
-                        }
-                    }
-                    state.tests = try Test.loadTests();
-                    state.testIndex = 0;
-                    state.actionIndex = 0;
-                    state.level.deinit();
-                    state.level = try state.tests.?[0].level.clone(alloc);
-                    state.passed = 0;
-                    state.failed = 0;
-                    std.debug.print("start playing tests\n", .{});
-                    // TODO: while testing, eat all inputs and allow p to exit. 
-                },
-                else => {}
+    if (event.type == .KEY_DOWN and event.key_code == .ESCAPE) {
+        sapp.requestQuit();
+    } else if (event.type == .QUIT_REQUESTED) {
+        saveToFile(SAVE_FILE, state.level) catch {
+            logErr("Failed to save.", .{});
+        };
+    } else if (state.tests) |*tests| {
+        try handleTestInput(event, tests);
+    } else {
+        try handleGameInput(event);
+    }
+}
+
+fn handleTestInput(event: sapp.Event, tests: *TestIter) !void {
+     if (event.type != .KEY_DOWN) {
+        return;
+    }
+
+    // TODO: ,. to move between tests (need to be able to reset level). ad to move between actions (need to be able to undo). space to pause. 
+    switch (event.key_code) {
+        .P => {
+            tests.deinit();
+            state.tests = null;
+        },
+        .MINUS => tests.speed += 1,
+        .EQUAL => {
+            if (tests.speed > 1) {
+                tests.speed -= 1;
             }
         },
-        .QUIT_REQUESTED => {
-            saveToFile(SAVE_FILE, state.level) catch {
-                std.debug.print("Failed to save.", .{});
+        else => {}
+    }
+}
+
+fn handleGameInput(event: sapp.Event) !void {
+    if (event.type != .KEY_DOWN) {
+        return;
+    }
+
+    switch (event.key_code) {
+        .W, .UP => try state.level.handleInput(.Up),
+        .A, .LEFT => try state.level.handleInput(.Left),
+        .S, .DOWN => try state.level.handleInput(.Down),
+        .D, .RIGHT => try state.level.handleInput(.Right),
+        .SPACE => try state.level.handleInput(.Wait),
+        .Z => {
+            // TODO: hack.
+            var hist = state.level.actionHistory.items;
+            if (hist.len > 0) {
+                var newLevel = try state.initialLevel.clone(alloc);
+                for (hist[0..hist.len-1]) |in| {
+                    try newLevel.handleInput(in);
+                }
+                state.level.deinit();  // TODO: extra cringe that every undo reallocates. 
+                state.level = newLevel;
+            }
+        },
+        .R => {
+            try state.level.copyFrom(state.initialLevel);
+        },
+        .COMMA => {
+            if (state.levelIndex > 0) {
+                state.levelIndex -= 1;
+                reloadLevel(state.levelIndex, true) catch |err| {
+                    logErr("Failed to load level {} {}\n", .{state.levelIndex, err});
+                };
+            }
+        },
+        .PERIOD => {
+            state.levelIndex += 1;
+            // TODO: split into two functions. one that does stuff with the state and wraps a pure one in official.zig 
+            reloadLevel(state.levelIndex, true) catch |err| {
+                logErr("Failed to load level {} {}\n", .{state.levelIndex, err});
             };
+        },
+        .T => {
+            try TestIter.saveTestRoute(state.levelIndex, state.level);
+        },
+        .P => {
+            std.debug.assert(state.tests == null); 
+            // TODO: need a way to change speed or pause and move back and forth manually or to specific level
+            //       does it need to be a real gui instead of rememebering keyboard shortcuts? 
+            state.tests = .{ .arena=std.heap.ArenaAllocator.init(std.heap.c_allocator) };
+            try state.tests.?.load();
         },
         else => {}
     }
@@ -184,7 +196,6 @@ fn reloadLevel(index: usize, reset: bool) !void {
     const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/baba/{}level.l";
     const path = try std.fmt.allocPrint(W.TEMP, template, .{index});
     var newLevel = try official.loadLevel(std.heap.c_allocator, path); 
-    newLevel.debugPrint();
     if (reset) {  // TODO: aaaaaaa, i dont care rn
         state.level.deinit();
         state.initialLevel.deinit();
@@ -194,7 +205,6 @@ fn reloadLevel(index: usize, reset: bool) !void {
     state.level = newLevel;
     state.initialLevel = try newLevel.clone(std.heap.c_allocator);
 }
-
 
 fn loadSavedLevel(path: []const u8) !W.Level {
     const saveFile = try std.fs.cwd().openFile(path, .{});
@@ -231,43 +241,21 @@ fn calcSizes(levelSize: W.Pos) Sizes {
     return .{ .quadNorm = .{quadWidthRat, quadHeightRat}, .quadPix=quadPix };
 }
 
+// TODO: system for logging temp messages on screen. 
 export fn frame() void {
-    const s = calcSizes(state.level.size);
+    var level = &state.level;
 
-    // TODO: system for logging temp messages on screen. 
-    if (state.tests) |tests| {
-        if (state.frames % 5 == 0) {
-            if (state.testIndex >= tests.len) {
-                std.debug.print("done playing tests\n", .{});
-                for (tests) |*tt| {
-                    tt.deinit();
-                }
-                state.tests = null;
-                reloadLevel(state.levelIndex, false) catch @panic("failed reload");
-            } else {
-                const t = &tests[state.testIndex];
-                if (state.actionIndex >= t.actions.len) {
-                    if (state.level.state != t.endState) {
-                        std.debug.print("FAIL test {}\n", .{ state.testIndex });
-                        state.failed += 1;
-                    } else {
-                        state.passed += 1;
-                    }
-                    state.actionIndex = 0;
-                    state.testIndex += 1;
-                    if (state.testIndex < tests.len) {  // TODO: ughghhghg
-                        const tt = &tests[state.testIndex];
-                        state.level = tt.level.clone(alloc) catch @panic("OOM");
-                    }
-                } else {
-                    const a = t.actions[state.actionIndex];
-                    state.level.handleInput(a) catch @panic("failed to play test move");
-                    state.actionIndex += 1;
-                }
-            }
+    // If tests are running, render that level instead. 
+    if (state.tests) |*tests| {
+        if (tests.tick()) {
+            level = tests.getLevel();
+        } else {
+            tests.deinit();
+            state.tests = null;
         }
     }
 
+    const s = calcSizes(level.size);
     sdtx.font(0);
     sgl.viewportf(0.0, 0.0, sapp.widthf(), sapp.heightf(), true);
     sgl.defaults();
@@ -277,41 +265,19 @@ export fn frame() void {
     sgl.beginQuads(); 
 
     // Shows which part of the screen you can actually be in. 
-    drawBackground(.{ .r=20, .g=20, .b=20 }, s.quadNorm, state.level.size);
+    drawBackground(.{ .r=20, .g=20, .b=20 }, s.quadNorm, level.size);
 
-    renderOfficial(s.quadNorm);
-    // renderUgly(s);
+    renderOfficial(level.*, s.quadNorm);
+    // renderUgly(level.*, s);
 
-    switch (state.level.state) {
+    switch (level.state) {
         .Win => alertText("You Win!"),
         .Lose => alertText("Press 'r' to restart."),
         .None => {},
     }
 
-    // TODO: auto line wrapping. 
     if (state.tests) |t| {
-        sdtx.color3b(0, 255, 0);
-        sdtx.canvas(sapp.widthf(), sapp.heightf());
-        sdtx.pos(1, 1);
-        if (state.failed == 0) {
-            sdtx.print("Passing {}/{}", .{ state.passed, t.len });
-        } else {
-            sdtx.print("Failed {}. Passed {}/{}.", .{ state.failed, state.passed, t.len });
-        }
-        sdtx.pos(1, 2);
-        if (state.testIndex < t.len) {
-            const str = t[state.testIndex].text;
-            const moveCount = t[state.testIndex].actions.len;
-            const moveChar = str.len - moveCount + state.actionIndex;
-            sdtx.color3b(0, 150, 0);
-            sdtx.print("{s}", .{ str[0..moveChar] });
-            if (moveChar < str.len) {
-                sdtx.color3b(255, 255, 255);
-                sdtx.print("{c}", .{ str[moveChar] });
-                sdtx.color3b(0, 150, 0);
-                sdtx.print("{s}", .{ str[moveChar+1..] });
-            }
-        }
+        renderTestOverlay(t);
     }
 
     sgl.end();
@@ -322,12 +288,40 @@ export fn frame() void {
     sg.commit();
 
     _ = W.frameArena.reset(.retain_capacity);
-    state.frames += 1; // TODO: timer and let you change rate. 
 }
 
-fn renderOfficial(quadNorm: PosF) void {
+
+// TODO: auto line wrapping. 
+fn renderTestOverlay(t: TestIter) void {
+    sdtx.color3b(0, 255, 0);
+    sdtx.canvas(sapp.widthf(), sapp.heightf());
+    sdtx.pos(1, 1);
+    if (t.failed == 0) {
+        sdtx.print("Passing {}/{}. ", .{ t.passed, t.cases.len });
+    } else {
+        sdtx.print("Failed {}. Passed {}/{}. ", .{ t.failed, t.passed, t.cases.len });
+    }
+    sdtx.color3b(0, 150, 0);
+    sdtx.print("Delay: {} (control with +/-).", .{ t.speed });
+    sdtx.pos(1, 2);
+    if (t.testIndex < t.cases.len) {
+        const str = t.cases[t.testIndex].text;
+        const moveCount = t.cases[t.testIndex].actions.len;
+        const moveChar = str.len - moveCount + t.actionIndex;
+        sdtx.color3b(0, 150, 0);
+        sdtx.print("{s}", .{ str[0..moveChar] });
+        if (moveChar < str.len) {
+            sdtx.color3b(255, 255, 255);
+            sdtx.print("{c}", .{ str[moveChar] });
+            sdtx.color3b(0, 150, 0);
+            sdtx.print("{s}", .{ str[moveChar+1..] });
+        }
+    }
+}
+
+fn renderOfficial(level: W.Level, quadNorm: PosF) void {
     const invalidInfo: official.TileSet.BlockData = .{ .layer=20, .colour=.{ 4, 1 }};
-    for (state.level.entities.items) |e| {
+    for (level.entities.items) |e| {
         // TODO: more elegant coping with not having loaded the tileSet. validate everything up front and swap to other renderer if needed. 
         const info = official.tileSet.?.blockToLayer.get(e.block) orelse invalidInfo;
 
@@ -338,7 +332,7 @@ fn renderOfficial(quadNorm: PosF) void {
 }
 
 // TODO: auto fall back to this if data not loaded. 
-fn renderUgly(s: Sizes) void {
+fn renderUgly(level: W.Level, s: Sizes) void {
     sdtx.color3b(255, 128, 0);
     const charPerQuad = 3.0;
     const charSizePix = s.quadPix / charPerQuad;
@@ -349,7 +343,7 @@ fn renderUgly(s: Sizes) void {
     const textColour: Colour = .{ .r=255, .g=255, .b=255 };
     const objColour: Colour = .{ .r=255, .g=255, .b=128 };
 
-    for (state.level.entities.items) |e| {
+    for (level.entities.items) |e| {
         const c = if (e.block.isText()) textColour else objColour;
         drawOneQuad(e.pos, Textures.TextureAtlas.Blank, c, s.quadNorm, 20); 
         drawWord(e, logicToCharGrid);
@@ -445,23 +439,6 @@ pub fn main() !void {
         .window_title = "BabaIsCloned",
         .logger = .{ .func = slog.func },
     });
-}
-
-fn defaultLevel() !W.Level {
-    var w = W.Level.init(std.heap.c_allocator, .{ 10, 10 });
-    try w.addEntity(.{ 1, 5 }, .{ .Noun = .Baba });
-    try w.addEntity(.{ 2, 5 }, .{ .Connect = .Is });
-    try w.addEntity(.{ 3, 5 }, .{ .State = .You });
-    try w.addEntity(.{ 2, 4 }, .{ .Noun = .Rock });
-    try w.addEntity(.{ 2, 6 }, .{ .State = .Push });
-    try w.addEntity(.{ 5, 0 }, .{ .Noun = .Wall });
-    try w.addEntity(.{ 6, 0 }, .{ .Connect = .Is });
-    try w.addEntity(.{ 7, 0 }, .{ .State = .Stop });
-    try w.addEntity(.{ 5, 2 }, .{ .Object = .Rock });
-    try w.addEntity(.{ 5, 1 }, .{ .Object = .Baba });
-    try w.addEntity(.{ 5, 8 }, .{ .Object = .Wall });
-    w.updateRules();
-    return w;
 }
 
 pub fn readAlloc(absPath: []const u8, aalloc: std.mem.Allocator) ![]u8 {
