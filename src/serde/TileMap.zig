@@ -1,3 +1,4 @@
+/// The TileMap is loaded from a .l binary file. 
 /// This is a direct port of a subset of https://github.com/clickteam-plugin/TileMap 
 /// Just enough to load levels from the real game. 
 /// The original's license is "Public domain. Do whatever you want with it." 

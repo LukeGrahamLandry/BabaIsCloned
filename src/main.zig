@@ -8,11 +8,10 @@ const sgl = sokol.gl;
 const sgapp = sokol.app_gfx_glue;
 const math = @import("std").math;
 const sdtx = sokol.debugtext;
-const save = @import("serde/save.zig");
-const official = @import("serde/official.zig");
 const Textures = @import("textures.zig");
-const TestIter = @import("serde/TestIter.zig");
+const TestIter = @import("ui/replay_test.zig").TestIter;
 const logErr = std.log.scoped(.tilemap).debug;
+const serde = @import("serde/serde.zig");
 
 const SAVE_FOLDER = "zig-out";
 const SAVE_FILE = SAVE_FOLDER ++ "/save.baba";
@@ -81,7 +80,7 @@ export fn init() void {
     sdtx.setup(sdtx_desc);
 
     const texturesFolder = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Sprites";
-    const tiles = official.tileSet.?;  // TODO: try load it then orelse. 
+    const tiles = serde.getBaseTileset().?;  // TODO: try load it then orelse. 
     const atlas = Textures.loadOfficialTextures(tiles, texturesFolder, W.TEMP) catch @panic("failed to load textures");
     state.atlas = atlas.atlas.bake();
     state.blockTextures = atlas.map;
@@ -178,7 +177,7 @@ fn handleGameInput(event: sapp.Event) !void {
             };
         },
         .T => {
-            try TestIter.saveTestRoute(state.levelIndex, state.level);
+            try serde.saveTestRoute(state.levelIndex, state.level);
         },
         .P => {
             std.debug.assert(state.tests == null); 
@@ -195,7 +194,7 @@ fn handleGameInput(event: sapp.Event) !void {
 fn reloadLevel(index: usize, reset: bool) !void {
     const template = "/Users/luke/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds/baba/{}level.l";
     const path = try std.fmt.allocPrint(W.TEMP, template, .{index});
-    var newLevel = try official.loadLevel(std.heap.c_allocator, path); 
+    var newLevel = try serde.loadLevelOfficial(std.heap.c_allocator, path); 
     if (reset) {  // TODO: aaaaaaa, i dont care rn
         state.level.deinit();
         state.initialLevel.deinit();
@@ -211,14 +210,14 @@ fn loadSavedLevel(path: []const u8) !W.Level {
     defer saveFile.close();
     const data = try saveFile.reader().readAllAlloc(alloc, std.math.maxInt(u16));
     defer alloc.free(data);
-    return try save.loadLevel(data, alloc);
+    return try serde.loadLevel(data, alloc);
 }
 
 fn saveToFile(path: []const u8, level: W.Level) !void {
     try std.fs.cwd().makePath(SAVE_FOLDER);
     const saveFile = try std.fs.cwd().createFile(path, .{});
     defer saveFile.close();
-    const data = try save.saveLevel(level, alloc);
+    const data = try serde.saveLevel(level, alloc);
     defer alloc.free(data);
     try saveFile.writer().writeAll(data);
 }
@@ -320,10 +319,11 @@ fn renderTestOverlay(t: TestIter) void {
 }
 
 fn renderOfficial(level: W.Level, quadNorm: PosF) void {
-    const invalidInfo: official.TileSet.BlockData = .{ .layer=20, .colour=.{ 4, 1 }};
+    const invalidInfo: serde.TileSet.BlockData = .{ .layer=20, .colour=.{ 4, 1 }};
+    const tiles = serde.getBaseTileset().?;
     for (level.entities.items) |e| {
         // TODO: more elegant coping with not having loaded the tileSet. validate everything up front and swap to other renderer if needed. 
-        const info = official.tileSet.?.blockToLayer.get(e.block) orelse invalidInfo;
+        const info = tiles.blockToLayer.get(e.block) orelse invalidInfo;
 
         const uv = state.blockTextures.get(e.block) orelse Textures.TextureAtlas.Blank;
         const c: Colour = state.pallet.get(info.colour[0], info.colour[1]);

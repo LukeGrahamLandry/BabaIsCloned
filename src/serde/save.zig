@@ -1,6 +1,5 @@
 const std = @import("std");
 const W = @import("../world.zig");
-const tests = @import("TestIter.zig");
 const str = std.ArrayList(u8);
 const VERSION: u32 = 2;
 const logErr = std.log.scoped(.tilemap).debug;

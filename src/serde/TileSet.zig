@@ -1,4 +1,5 @@
 /// This parses values.lua to get the base tile set. 
+/// The tile set maps a position to an entity type (block, sprite, layer, & colour)
 
 const std = @import("std");
 const W = @import("../world.zig");
@@ -210,7 +211,7 @@ pub fn BlockMap(comptime V: type) type {
             }
         }
 
-        pub fn get(self: *@This(), key: W.Block) ?V {
+        pub fn get(self: @This(), key: W.Block) ?V {
             return switch (key) {
                 .Noun => |word| self.noun.get(word),
                 .Object => |word| self.object.get(word),
@@ -219,7 +220,7 @@ pub fn BlockMap(comptime V: type) type {
             };
         }
 
-        pub fn contains(self: *@This(), key: W.Block) bool {
+        pub fn contains(self: @This(), key: W.Block) bool {
             return switch (key) {
                 .Noun => |word| self.noun.contains(word),
                 .Object => |word| self.object.contains(word),

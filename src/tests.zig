@@ -1,9 +1,10 @@
 const std = @import("std");
 const W = @import("world.zig");
-const TestIter = @import("serde/TestIter.zig");
+const TestIter = @import("ui/replay_test.zig").TestIter;
 const expectEq = std.testing.expectEqual;
 
 test "replay" {
+    // TODO: just write the for loop here and move more ui stuff to replay_test. 
     var tests: TestIter = .{ .arena=std.heap.ArenaAllocator.init(std.heap.c_allocator) };
     defer tests.deinit();
     try tests.load();
